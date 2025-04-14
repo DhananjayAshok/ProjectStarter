@@ -3,6 +3,7 @@ import os
 import yaml
 import datetime
 from .log_handling import log_error
+import hashlib
 
 def write_meta(write_dir, meta_dict, logger):
     meta_hash = hash_meta_dict(meta_dict)
@@ -30,7 +31,9 @@ def meta_dict_to_str(meta_dict, print_mode=False, n_indents=1, skip_write_timest
 
 def hash_meta_dict(meta_dict):
     meta_str = meta_dict_to_str(meta_dict)
-    return abs(hash(meta_str))
+    hash_obj = hashlib.sha256(meta_str.encode('utf-8'))
+    hex_hash = hash_obj.hexdigest()[:10] # guessing that this won't cause problems. It could though, lol
+    return hex_hash
 
 def add_meta_details(meta_dict, add_details):
     alt = meta_dict.copy()
