@@ -20,7 +20,8 @@ def meta_dict_to_str(meta_dict, print_mode=False, n_indents=1, skip_write_timest
     meta_str = ""
     for key in keys:
         if print_mode:
-            meta_str += f"{'\t' * n_indents}{key}: {meta_dict[key]}\n"
+            indent = '\t' * n_indents
+            meta_str += f"{indent}{key}: {meta_dict[key]}\n"
         else:
             if skip_write_timestamp and key == "write_timestamp":
                 continue
