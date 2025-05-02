@@ -1,1 +1,1 @@
-storage_dir: "PLACEHOLDER"
+storage_dir: "PLACEHOLDER" # Path to the directory where heavy duty storage will be done, meant for large files like models and datasets
