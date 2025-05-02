@@ -1,8 +1,6 @@
 # Project Starter
 ## Overview
 
-This repository is a useful starting point for a project in Python.
-
 The utils file offers some important functionality across the project:
 
 | Function / Function Set| Description |  Common Pattern
