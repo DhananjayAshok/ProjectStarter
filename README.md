@@ -3,7 +3,7 @@
 
 The utils submodule offers some important functionality across the project:
 
-| Function / Function Set| Description |  Common Pattern
+| Function(s) / Class| Description |  Common Pattern
 | - | - |  -
 | `load_parameters` | Used to read the parameters from the config files and return a populated dictionary. You can also pass in an existing parameters dictionary, in which case this dict will just be returned | `parameters = load_parameters(parameters)`
 | `log_error`, `log_warn`, `log_info`, `log_dict` | Used to send specific messages to the logger. Takes an optional parameter argument that matters if and only if you pass in a `--log_file` argument | `log_warn('Bruh')` if you do not intend on passing in a log_file, `log_warn('Bruh', parameters)` if you do
