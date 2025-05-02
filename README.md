@@ -1,7 +1,7 @@
 # Project Starter
 ## Overview
 
-The utils file offers some important functionality across the project:
+The utils submodule offers some important functionality across the project:
 
 | Function / Function Set| Description |  Common Pattern
 | - | - |  -
