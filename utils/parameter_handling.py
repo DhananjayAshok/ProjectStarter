@@ -1,6 +1,6 @@
 import os
 import yaml
-from utils.fundamental import get_logger, lazy_log_error
+from utils.fundamental import get_logger
 
 
 def load_yaml(yaml_path):
