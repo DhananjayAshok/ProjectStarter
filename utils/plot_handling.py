@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 
 class Plotter:
-    def __init__(self, parameters):
+    def __init__(self, parameters=None):
         self.parameters = load_parameters(parameters)
         self.size_params = {}
         sns.set_style("whitegrid")
