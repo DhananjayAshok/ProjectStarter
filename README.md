@@ -17,4 +17,63 @@ To get started, use this template to create a new repo then look at the followin
 
  1. [configs](configs): Houses various .yaml files. You can add any yaml files here and they will be read in to the parameters dictionary and can be made easily available in any part of the code. The [private_vars.yaml](configs/private_vars.yaml) file is meant to hold all parameters that could identify you. This makes it easier to ensure your repository is anonymized. Update it less frequently. 
  2. [setup](setup): Contains set up instructions, make sure to add the Python version you are using to the [README](setup/README.md). The [short requirements](setup/short_requirements.txt) are meant to store just the installed packages with appropriate versions, while the [long requirements](setup/long_requirements.txt) are meant to be generated with `pip freeze >> setup/long_requirements.txt`
- 3. The [main](main.py) file should be your entry point for most if not all calls to the codebase. Any command you want to call should be implemented as a click command and added as a subcommand to the main group in this file. In the click decorator of the `main` function of this file, you can specify any other config file parameters that you would like to be able to easily override in a command line call. Make sure to set the default appropriately. You may call this script in the following way: `python main.py --random_seed 38 --any_prespecified_config_file_overides subcommand_name --subcommand_specific_argument idk`
+ 3. The [main](main.py) file contains the pattern that should typically be your entry point for most if not all calls to the codebase. Any command you want to call should be implemented as a click command and added as a subcommand to the main group in a file. In the click decorator of the `main` function of the calling file, you can specify any other config file parameters that you would like to be able to easily override in a command line call. Make sure to set the default appropriately. You may call this script in the following way: `python main.py --random_seed 38 --any_prespecified_config_file_overides subcommand_name --subcommand_specific_argument idk`
+
+If you want to run any of these through a bash script, it may be helpful to use this template for argparse with bash
+```bash
+#!/usr/bin/env bash
+
+# Default values for optional arguments
+declare -A ARGS
+ARGS["d"]="hello"   # -d default
+ARGS["b"]="bye"     # -b default
+
+# Required arguments
+REQUIRED_ARGS=("s" "t")
+
+# Help function
+usage() {
+    echo "Usage: $0 [-d <value>] [-b <value>] -s <value> -t <value>"
+    echo "  -d    Optional (default: ${ARGS["d"]})"
+    echo "  -b    Optional (default: ${ARGS["b"]})"
+    echo "  -s    Required"
+    echo "  -t    Required"
+    exit 1
+}
+
+# Parse flags
+while getopts ":d:b:s:t:" opt; do
+    case $opt in
+        d|b|s|t)
+            ARGS["$opt"]="$OPTARG"
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            usage
+            ;;
+        :)
+            echo "Option -$OPTARG requires an argument." >&2
+            usage
+            ;;
+    esac
+done
+
+# Check required arguments
+MISSING=false
+for req in "${REQUIRED_ARGS[@]}"; do
+    if [[ -z "${ARGS[$req]}" ]]; then
+        echo "Error: Missing required argument -$req"
+        MISSING=true
+    fi
+done
+
+if [[ "$MISSING" == true ]]; then
+    usage
+fi
+
+# Print active variables
+echo "Active variables:"
+for key in "${!ARGS[@]}"; do
+    echo "  -$key = ${ARGS[$key]}"
+done
+```
