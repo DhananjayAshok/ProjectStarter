@@ -1,5 +1,5 @@
 # This file contains all the fundamental utilities that do not rely on any other file. 
-
+import os
 import logging
 
 def get_logger(level=logging.INFO, filename=None, add_console=True):
@@ -40,3 +40,10 @@ def meta_dict_to_str(meta_dict, print_mode=False, n_indents=1, skip_write_timest
 def logger_print_dict(logger, meta_dict, n_indents=1):
     meta_dict_str = meta_dict_to_str(meta_dict, print_mode=True, n_indents=n_indents, skip_write_timestamp=False)
     logger.info(meta_dict_str)
+
+
+def file_makedir(file_path):
+    dirname = os.path.dirname(file_path)
+    if dirname != "" and not os.path.exists(dirname):
+        os.makedirs(dirname)
+    return
