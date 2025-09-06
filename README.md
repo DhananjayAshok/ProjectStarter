@@ -19,10 +19,11 @@ To get started, use this template to create a new repo then look at the followin
  2. [setup](setup): Contains set up instructions, make sure to add the Python version you are using to the [README](setup/README.md). The [short requirements](setup/short_requirements.txt) are meant to store just the installed packages with appropriate versions, while the [long requirements](setup/long_requirements.txt) are meant to be generated with `pip freeze >> setup/long_requirements.txt`
  3. The [main](main.py) file contains the pattern that should typically be your entry point for most if not all calls to the codebase. Any command you want to call should be implemented as a click command and added as a subcommand to the main group in a file. In the click decorator of the `main` function of the calling file, you can specify any other config file parameters that you would like to be able to easily override in a command line call. Make sure to set the default appropriately. You may call this script in the following way: `python main.py --random_seed 38 --any_prespecified_config_file_overides subcommand_name --subcommand_specific_argument idk`
 
-If you want to run any of these through a bash script, it may be helpful to use this template for argparse with bash
+If you want to run any of these through a bash script, it may be helpful to use this template for argparse with bash. To enable loading of config variables into the bash scripts, see how to create a configs/config.sh file in the [README](configs/README.md)
 ```bash
 #!/usr/bin/env bash
 
+source configs/config.sh
 # Default values for optional arguments
 declare -A ARGS
 ARGS["d"]="hello"   # -d default
