@@ -35,4 +35,9 @@ You can now add pip packages with:
 uv add click
 ```
 
-This creates a uv.lock file, that must be committed to version control
+This creates a uv.lock file, that must be committed to version control. This will also create the environment. Source it with (from root):
+
+
+```console
+source setup/.venv/bin/activate
+```
