@@ -36,6 +36,8 @@ def main():
     for key in all_params:
         if all_params[key] == "PLACEHOLDER":
             fail_keys.append(key)
+        if key == "env_dir" and not os.path.exists(all_params[key]+ "/bin"):
+            raise ValueError(f"Config variable {key} must be set to a virtual environment directory (but could not find {all_params[key]}/bin. Check that the path is correct.")
     if fail_keys:
         raise ValueError(f"The following keys have the value 'PLACEHOLDER'. Please set them in the config files before creating the env file: {fail_keys}")
 
