@@ -32,7 +32,7 @@ Then, come back to the setup directory and run:
 uv sync --active
 ```
 
-If you do this, remember to add `/path/to/venv/` to the [configs file](../configs/project_vars.yaml)
+If you do this, remember to add `/path/to/venv/` to the [configs file](../configs/private_vars.yaml)
 
 
 # Creating New UV Project
