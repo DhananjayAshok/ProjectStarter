@@ -28,7 +28,7 @@ If you want to create a new project, first cd into the [setup](../setup) directo
 uv init
 rm main.py
 ```
-We never use this main file, so delete it. This will create a project with the name `setup`. To change the project name, edit the `pyproject.toml` file. 
+We never use this main file, so delete it. This will create a project with the name `setup`. To change the project name, edit the `pyproject.toml` file. Also, make sure to add the exact python version to `pyproject.toml`, i.e. make it `==` not `>=`
 
 You can now add pip packages with:
 ```console
