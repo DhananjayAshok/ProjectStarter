@@ -1,1 +1,2 @@
 storage_dir: "PLACEHOLDER" # Path to the directory where heavy duty storage will be done, meant for large files like models and datasets
+env_dir: "setup/.venv/" # Path to the virtual environment. If you have installed the venv in a different location, make sure to change this.
