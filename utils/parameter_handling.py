@@ -12,9 +12,10 @@ def compute_secondary_parameters(params):
     params["data_dir"] = os.path.join(params["storage_dir"], "data")
     params["model_dir"] = os.path.join(params["storage_dir"], "models")
     params["tmp_dir"] = os.path.join(params["storage_dir"], "tmp")
+    params["sync_dir"] = os.path.join(params["storage_dir"], "sync")
     params["log_dir"] = os.path.join(params["results_dir"], "logs")
-    params["figure_dir"] = os.path.join(params["results_dir"], "figures")
-    for dirname in ["data_dir", "model_dir", "log_dir", "figure_dir", "tmp_dir"]:
+    params["figure_dir"] = os.path.join(params["results_dir"], "figures")    
+    for dirname in ["data_dir", "model_dir", "log_dir", "figure_dir", "tmp_dir", "sync_dir"]:
         if not os.path.exists(params[dirname]):
             os.makedirs(params[dirname])
     if "log_file" not in params:
