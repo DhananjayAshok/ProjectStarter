@@ -9,7 +9,7 @@ loaded_parameters = load_parameters()
 
 
 @click.command()
-@click.option("--repo_namespace", type=str, required=True, help="The namespace (user or org) on the hub where the repo will be created.")
+@click.option("--repo_namespace", type=str, default=None, required=False, help="The namespace (user or org) on the hub where the repo will be created.")
 @click.option("--repo_name", type=str, required=True, help="The name of the repo to create on the hub.")
 @click.option("--private", is_flag=True, default=False, help="Whether the repo should be private.")
 @click.pass_obj
@@ -17,7 +17,10 @@ def create_hub_repo(parameters, repo_namespace, repo_name, private):
     """
     Create a new repo on the Hugging Face Hub.
     """
-    repo_id = f"{repo_namespace}/{repo_name}"
+    if repo_namespace is None:
+        repo_id = repo_name
+    else:
+        repo_id = f"{repo_namespace}/{repo_name}"
     api = HfApi()
     api.create_repo(
     repo_id=repo_id,
@@ -27,21 +30,21 @@ def create_hub_repo(parameters, repo_namespace, repo_name, private):
 
 
 @click.command()
-@click.option("--repo_namespace", type=str, required=True, help="The namespace (user or org) on the hub where the repo is located.")
+@click.option("--repo_namespace", type=str, default=None, required=False, help="The namespace (user or org) on the hub where the repo is located.")
 @click.option("--repo_name", type=str, required=True, help="The name of the repo on the hub.")
 @click.pass_obj
 def setup_sync(parameters, repo_namespace, repo_name):
     """
     Set up the local sync directory to sync with the specified repo on the Hugging Face Hub.
     """
-    root_dir = parameters["storage_dir"]
+    repo_id = repo_name if repo_namespace is None else f"{repo_namespace}/{repo_name}"
     sync_dir = os.path.abspath(parameters["sync_dir"])
     if not os.path.exists(sync_dir):
         log_error(f"Sync directory {sync_dir} does not exist, please check your configuration.", parameters)
     repo = Repository(
-    local_dir=sync_dir,
-    clone_from=f"{repo_namespace}/{repo_name}",
-    repo_type="dataset",
+        local_dir=sync_dir,
+        clone_from=repo_id,
+        repo_type="dataset",
     )
     log_info(f"Successfully set up sync with repo {repo_namespace}/{repo_name} in directory {sync_dir}.", parameters)
     repo.pull()
