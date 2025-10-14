@@ -66,12 +66,17 @@ def push_data_to_hub(parameters, local_path, ignore_patterns):
 @click.option("--huggingface_repo_name", type=str, default=None, help="The name of the repo on the hub.")
 @click.pass_context
 def main(ctx, **input_parameters):
-    loaded_parameters.update(input_parameters)
+    if "huggingface_repo_namespace" not in loaded_parameters:
+        if input_parameters["huggingface_repo_namespace"] is not None:
+            loaded_parameters["huggingface_repo_namespace"] = input_parameters["huggingface_repo_namespace"]
+        else:
+            log_error("huggingface_repo_namespace must be specified either in the config file or as a command line argument.", loaded_parameters)
+    if "huggingface_repo_name" not in loaded_parameters:
+        if input_parameters["huggingface_repo_name"] is not None:
+            loaded_parameters["huggingface_repo_name"] = input_parameters["huggingface_repo_name"]
+        else:
+            log_error("huggingface_repo_name must be specified either in the config file or as a command line argument.", loaded_parameters)
     compute_secondary_parameters(loaded_parameters)
-    if "huggingface_repo_namespace" not in loaded_parameters or loaded_parameters["huggingface_repo_namespace"] is None:
-        log_error("huggingface_repo_namespace must be specified either in the config file or as a command line argument.", loaded_parameters)
-    if "huggingface_repo_name" not in loaded_parameters or loaded_parameters["huggingface_repo_name"] is None:
-        log_error("huggingface_repo_name must be specified either in the config file or as a command line argument.", loaded_parameters)
     api = HfApi()
     loaded_parameters["api"] = api
     ctx.obj = loaded_parameters
