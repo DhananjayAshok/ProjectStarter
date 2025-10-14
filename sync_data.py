@@ -41,13 +41,13 @@ def setup_sync(parameters):
         log_error(f"Sync directory {sync_dir} does not exist, please check your configuration.", parameters)
     api = parameters["api"]
     api.snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=sync_dir)
-    log_info(f"Successfully synced repo at {repo_namespace}/{repo_name} with directory {sync_dir}.", parameters)
+    log_info(f"Tried to sync repo at {repo_namespace}/{repo_name} with directory {sync_dir}. Check output above for success", parameters)
 
 
 @click.command()
 @click.option("--ignore_patterns", type=str, multiple=True, default=[], help="Patterns to ignore when pushing data to the hub.")
 @click.pass_obj
-def push_data_to_hub(parameters, local_path, ignore_patterns):
+def push_data_to_hub(parameters, ignore_patterns):
     """
     In general how this works is:
         1. Check if repo exists. If it does, first pull and write it to sync directory (i.e. root_dir)
