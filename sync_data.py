@@ -52,6 +52,7 @@ def push_data_to_hub(parameters, ignore_patterns):
     In general how this works is:
         1. Check if repo exists. If it does, first pull and write it to sync directory (i.e. root_dir)
     """
+    ignore_patterns = tuple(ignore_patterns)
     repo_namespace = parameters["huggingface_repo_namespace"]
     repo_name = parameters["huggingface_repo_name"]
     api = parameters["api"]
