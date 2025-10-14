@@ -90,6 +90,10 @@ def main(ctx, **input_parameters):
     ctx.obj = loaded_parameters
 
 
+main.add_command(create_hub_repo, name="create")
+main.add_command(setup_sync, name="init")
+main.add_command(pull_data_from_hub, name="pull")
+main.add_command(push_data_to_hub, name="push")
+
 if __name__ == "__main__":
-    main.add_command(push_data_to_hub, name="push_data_to_hub")
     main()
