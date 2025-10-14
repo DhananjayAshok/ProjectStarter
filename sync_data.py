@@ -1,7 +1,7 @@
 from utils.parameter_handling import load_parameters, compute_secondary_parameters
 from utils import log_error, log_info, log_warn
 import click
-from huggingface_hub import HfApi, Repository
+from huggingface_hub import HfApi
 import os
 
 loaded_parameters = load_parameters()
@@ -21,12 +21,13 @@ def create_hub_repo(parameters, repo_namespace, repo_name, private):
         repo_id = repo_name
     else:
         repo_id = f"{repo_namespace}/{repo_name}"
-    api = HfApi()
+    api = parameters["api"]
     api.create_repo(
     repo_id=repo_id,
     repo_type="dataset",
     exist_ok=True, # Won't raise an error if the repo already exists
     private=private)
+    log_info(f"Successfully created repo {repo_id} on the Hugging Face Hub.", parameters)
 
 
 @click.command()
@@ -41,13 +42,9 @@ def setup_sync(parameters, repo_namespace, repo_name):
     sync_dir = os.path.abspath(parameters["sync_dir"])
     if not os.path.exists(sync_dir):
         log_error(f"Sync directory {sync_dir} does not exist, please check your configuration.", parameters)
-    repo = Repository(
-        local_dir=sync_dir,
-        clone_from=repo_id,
-        repo_type="dataset",
-    )
+    api = parameters["api"]
+    api.snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=sync_dir)
     log_info(f"Successfully set up sync with repo {repo_namespace}/{repo_name} in directory {sync_dir}.", parameters)
-    repo.pull()
 
 
 @click.command()
@@ -90,6 +87,8 @@ def push_data_to_hub(parameters, local_path, ignore_patterns):
 def main(ctx, **input_parameters):
     loaded_parameters.update(input_parameters)
     compute_secondary_parameters(loaded_parameters)
+    api = HfApi()
+    loaded_parameters["api"] = api
     ctx.obj = loaded_parameters
 
 
