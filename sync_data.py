@@ -45,20 +45,18 @@ def setup_sync(parameters):
 
 
 @click.command()
-@click.option("--ignore_patterns", type=str, multiple=True, default=[], help="Patterns to ignore when pushing data to the hub.")
 @click.pass_obj
-def push_data_to_hub(parameters, ignore_patterns):
+def push_data_to_hub(parameters):
     """
     In general how this works is:
         1. Check if repo exists. If it does, first pull and write it to sync directory (i.e. root_dir)
     """
-    ignore_patterns = tuple(ignore_patterns)
     repo_namespace = parameters["huggingface_repo_namespace"]
     repo_name = parameters["huggingface_repo_name"]
     api = parameters["api"]
     sync_dir = os.path.abspath(parameters["sync_dir"])
     repo_id = f"{repo_namespace}/{repo_name}"
-    api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=sync_dir, ignore_patterns=ignore_patterns)
+    api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=sync_dir)
     log_info(f"Successfully pushed data from {sync_dir} to repo {repo_namespace}/{repo_name} on the Hugging Face Hub.", parameters)
 
 
