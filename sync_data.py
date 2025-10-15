@@ -81,7 +81,7 @@ def main(ctx, **input_parameters):
     ctx.obj = loaded_parameters
 
 
-main.add_command(create_hub_repo, name="create")
+main.add_command(create_hub_repo, name="init")
 main.add_command(setup_sync, name="pull")
 main.add_command(push_data_to_hub, name="push")
 
