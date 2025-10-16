@@ -11,6 +11,7 @@ Core functionality:
 | - | - |  -
 | `load_parameters` | Used to read the parameters from the config files and return a populated dictionary. You can also pass in an existing parameters dictionary, in which case this dict will just be returned | `parameters = load_parameters(parameters)`
 | `log_error`, `log_warn`, `log_info`, `log_dict` | Used to send specific messages to the logger. Takes an optional parameter argument that matters if and only if you pass in a `--log_file` argument | `log_warn('Bruh')` if you do not intend on passing in a log_file, `log_warn('Bruh', parameters)` if you do|
+|`sync_data.py` | Used to sync files in the storage_dir/sync directories with the HuggingFace Datasets repo | `python sync_data.py pull`, `python sync_data.py push`, `python sync_data.py init`|
 
 Secondary functionality:
 
