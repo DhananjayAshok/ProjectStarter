@@ -34,6 +34,15 @@ uv sync --active
 
 If you do this, remember to add `/path/to/venv/` to the [configs file](../configs/private_vars.yaml)
 
+Alternatively, you can create a simlink to the env path with (run this in the setup directory, not root):
+```
+ln -s /path/to/venv .venv 
+```
+Then, you can avoid the --active flag and do not need to alter the configs file. Install with:
+```console
+uv sync
+```
+
 
 # Creating New UV Project
 
