@@ -56,7 +56,7 @@ def push_data_to_hub(parameters):
     api = parameters["api"]
     sync_dir = os.path.abspath(parameters["sync_dir"])
     repo_id = f"{repo_namespace}/{repo_name}"
-    api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=sync_dir)
+    api.upload_large_folder(repo_id=repo_id, repo_type="dataset", folder_path=sync_dir)
     log_info(f"Successfully pushed data from {sync_dir} to repo {repo_namespace}/{repo_name} on the Hugging Face Hub.", parameters)
 
 
