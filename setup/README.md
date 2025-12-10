@@ -2,12 +2,14 @@
 
 If you want to create a new project, first decide the python version you will be using (3.12 is a good bet). Next, decide where *you* want to install the virtual environment. The project will always consider `setup/.venv` as the location by default. There is never a good reason to change this, but if you must, it can be done by altering the [config file](../configs/private_vars.yaml). 
 
-First create the environment directory wherever you want it, and then symlink it to the `setup/.venv` directory
+First, create the environment directory wherever you want it, and then symlink it to the `setup/.venv` directory
 ```console
 # Run this in root directory of the project
 uv venv /path/to/venv --python=3.XX
 ln -s /path/to/venv setup/.venv 
 ```
+If you are doing this, make sure to set the UV_CACHE environment variable to the same filesystem as the environment.
+
 
 cd into the [setup](../setup) directory and then run:
 ```console
