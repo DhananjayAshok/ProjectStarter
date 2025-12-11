@@ -2,6 +2,8 @@
 
 You should put all private variables in the private_vars yaml (currently storage_dir is mandatory), the remaining can go into any .yaml file in this directory and will be read as parameters. Once you've defined the parameters, run the following command to create a config.env file in the configs folder. 
 
+#### Important: All paths MUST be global paths
+
 ```bash
 python configs/create_env_file.py
 ```
