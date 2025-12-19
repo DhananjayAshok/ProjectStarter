@@ -18,7 +18,7 @@ def log_info(message, parameters=None):
     logger = parameters["logger"]
     logger.info(message, stacklevel=2)
 
-def log_dict(meta_dict, n_indents=1, parameters=None):
+def log_dict(meta_dict, *, n_indents=1, parameters=None):
     """
     Print a dictionary in a readable format
     """
