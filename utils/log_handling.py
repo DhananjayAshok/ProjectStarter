@@ -1,12 +1,13 @@
 from utils.fundamental import meta_dict_to_str
 from utils.parameter_handling import load_parameters
+import sys
 
 
 def log_error(message, parameters=None):
     parameters = load_parameters(parameters)
     logger = parameters["logger"]
     logger.error(message, stacklevel=2)
-    raise ValueError(message)
+    sys.exit(1)
 
 def log_warn(message, parameters=None):
     parameters = load_parameters(parameters)
