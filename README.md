@@ -35,13 +35,14 @@ If you want to run any of these through a bash script, it may be helpful to use 
 
 source configs/config.env || { echo "configs/config.env not found"; exit 1; }
 
-# Define Defaults
+# Define defaults and required args
 declare -A ARGS
 ARGS["first"]="hello"
 ARGS["second"]="100000"
-
-# Define Required Keys
 REQUIRED_ARGS=("third")
+
+# Handle parsing and input errors below:
+ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
 
 USAGE_STR="Usage: $0"
 
@@ -69,9 +70,17 @@ while [[ $# -gt 0 ]]; do
         --*)
             # Extract the name (remove the leading --)
             FLAG=${1#--}
-            
-            # Check if it's a valid key in our ARGS or a required arg
-            # We use a temporary check here
+            VALID=false
+            for allowed in "${ALLOWED_FLAGS[@]}"; do
+                if [[ "$FLAG" == "$allowed" ]]; then
+                    VALID=true
+                    break
+                fi
+            done
+            if [ "$VALID" = false ]; then
+                echo "Error: Unknown flag --$FLAG"
+                usage
+            fi            
             ARGS["$FLAG"]="$2"
             shift 2
             ;;
@@ -85,7 +94,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 4. Strict Validation
+# 4. Validation
 for req in "${REQUIRED_ARGS[@]}"; do
     if [[ -z "${ARGS[$req]}" ]]; then
         echo "Error: Argument --$req is required."
@@ -100,4 +109,6 @@ echo "Active variables:"
 for key in "${!ARGS[@]}"; do
     echo "  -$key = ${ARGS[$key]}"
 done
+
+# Put your script code below:
 ```
