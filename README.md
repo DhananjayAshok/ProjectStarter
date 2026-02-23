@@ -33,7 +33,7 @@ If you want to run any of these through a bash script, it may be helpful to use 
 ```bash
 #!/usr/bin/env bash
 
-source configs/config.sh
+source configs/config.sh || echo "configs/config.sh not found"; exit 1
 # Default values for optional arguments
 declare -A ARGS
 ARGS["d"]="hello"   # -d default
