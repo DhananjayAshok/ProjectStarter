@@ -33,54 +33,67 @@ If you want to run any of these through a bash script, it may be helpful to use 
 ```bash
 #!/usr/bin/env bash
 
-source configs/config.env || {echo "configs/config.sh not found"; exit 1}
-# Default values for optional arguments
+source configs/config.env || { echo "configs/config.env not found"; exit 1; }
+
+# Define Defaults
 declare -A ARGS
-ARGS["d"]="hello"   # -d default
-ARGS["b"]="bye"     # -b default
+ARGS["first"]="hello"
+ARGS["second"]="100000"
 
-# Required arguments
-REQUIRED_ARGS=("s" "t")
+# Define Required Keys
+REQUIRED_ARGS=("third")
 
-# Help function
-usage() {
-    echo "Usage: $0 [-d <value>] [-b <value>] -s <value> -t <value>"
-    echo "  -d    Optional (default: ${ARGS["d"]})"
-    echo "  -b    Optional (default: ${ARGS["b"]})"
-    echo "  -s    Required"
-    echo "  -t    Required"
+USAGE_STR="Usage: $0"
+
+# Add Required to string
+for req in "${REQUIRED_ARGS[@]}"; do
+    USAGE_STR+=" --$req <value>"
+done
+
+# Add Optionals to string
+for opt in "${!ARGS[@]}"; do
+    # Only list if NOT in required (to avoid double listing)
+    if [[ ! " ${REQUIRED_ARGS[*]} " =~ " ${opt} " ]]; then
+        USAGE_STR+=" [--$opt <value> (default: ${ARGS[$opt]})]"
+    fi
+done
+
+function usage() {
+    echo "$USAGE_STR"
     exit 1
 }
 
-# Parse flags
-while getopts ":d:b:s:t:" opt; do
-    case $opt in
-        d|b|s|t)
-            ARGS["$opt"]="$OPTARG"
+# 3. Parser
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --*)
+            # Extract the name (remove the leading --)
+            FLAG=${1#--}
+            
+            # Check if it's a valid key in our ARGS or a required arg
+            # We use a temporary check here
+            ARGS["$FLAG"]="$2"
+            shift 2
             ;;
-        \?)
-            echo "Invalid option: -$OPTARG" >&2
+        -h|--help)
             usage
             ;;
-        :)
-            echo "Option -$OPTARG requires an argument." >&2
+        *)
+            echo "Unknown argument: $1"
             usage
             ;;
     esac
 done
 
-# Check required arguments
-MISSING=false
+# 4. Strict Validation
 for req in "${REQUIRED_ARGS[@]}"; do
     if [[ -z "${ARGS[$req]}" ]]; then
-        echo "Error: Missing required argument -$req"
-        MISSING=true
+        echo "Error: Argument --$req is required."
+        FAILED=true
     fi
 done
 
-if [[ "$MISSING" == true ]]; then
-    usage
-fi
+if [ "$FAILED" = true ]; then usage; fi
 
 # Print active variables
 echo "Active variables:"
