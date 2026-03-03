@@ -1,4 +1,5 @@
 from utils.parameter_handling import load_parameters
+from utils.log_handling import log_warn, log_info
 from tqdm import tqdm
 import numpy as np
 
@@ -41,18 +42,18 @@ def paired_bootstrap(sys1, sys2, num_samples=10000, sample_ratio=0.5, progress_t
     sys1_scores.append(sys1_score)
     sys2_scores.append(sys2_score)
 
-  # Print win stats
+  # log_info win stats
   wins = [x/float(num_samples) for x in wins]
-  print('Win ratio: sys1=%.3f, sys2=%.3f, tie=%.3f' % (wins[0], wins[1], wins[2]))
+  log_info('Win ratio: sys1=%.3f, sys2=%.3f, tie=%.3f' % (wins[0], wins[1], wins[2]), parameters=parameters)
   if wins[0] > wins[1]:
-    print('(sys1 is superior with p value p=%.3f)\n' % (1-wins[0]))
+    log_info('(sys1 is superior with p value p=%.3f)\n' % (1-wins[0]), parameters=parameters)
   elif wins[1] > wins[0]:
-    print('(sys2 is superior with p value p=%.3f)\n' % (1-wins[1]))
+    log_info('(sys2 is superior with p value p=%.3f)\n' % (1-wins[1]), parameters=parameters)
 
-  # Print system stats
+  # log_info system stats
   sys1_scores.sort()
   sys2_scores.sort()
-  print('sys1 mean=%.3f, median=%.3f, 95%% confidence interval=[%.3f, %.3f]' %
-          (np.mean(sys1_scores), np.median(sys1_scores), sys1_scores[int(num_samples * 0.025)], sys1_scores[int(num_samples * 0.975)]))
-  print('sys2 mean=%.3f, median=%.3f, 95%% confidence interval=[%.3f, %.3f]' %
-          (np.mean(sys2_scores), np.median(sys2_scores), sys2_scores[int(num_samples * 0.025)], sys2_scores[int(num_samples * 0.975)]))
+  log_info('sys1 mean=%.3f, median=%.3f, 95%% confidence interval=[%.3f, %.3f]' %
+          (np.mean(sys1_scores), np.median(sys1_scores), sys1_scores[int(num_samples * 0.025)], sys1_scores[int(num_samples * 0.975)]), parameters=parameters)
+  log_info('sys2 mean=%.3f, median=%.3f, 95%% confidence interval=[%.3f, %.3f]' %
+          (np.mean(sys2_scores), np.median(sys2_scores), sys2_scores[int(num_samples * 0.025)], sys2_scores[int(num_samples * 0.975)]), parameters=parameters)
