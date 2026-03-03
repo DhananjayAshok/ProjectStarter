@@ -19,7 +19,9 @@ def paired_bootstrap(sys1, sys2, num_samples=10000, sample_ratio=0.5, progress_t
   sys2_scores = []
   wins = [0, 0, 0]
   n = len(sys1)
-  if 
+  if len(sys2) != n:
+    log_warn("System outputs must be of the same length for paired bootstrap evaluation." , parameters)
+    return
   ids = list(range(n))
 
   for _ in tqdm(range(num_samples), desc=progress_title):
