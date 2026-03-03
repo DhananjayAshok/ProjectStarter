@@ -21,7 +21,7 @@ We never use this main file, so delete it. This will create a project with the n
 
 You can now add pip packages with:
 ```console
-uv add click huggingface_hub seaborn
+uv add click huggingface_hub seaborn tqdm numpy
 ```
 These three packages are required for this codebase to run, but you can remove the `huggingface_hub` dependency by removing [`sync_data.py`](../sync_data.py) and remove the `seaborn` dependency by removing [Plotter](../utils/plot_handling.py).
 
