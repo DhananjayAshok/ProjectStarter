@@ -43,6 +43,8 @@ def paired_bootstrap(sys1, sys2, num_samples=10000, sample_ratio=0.5, progress_t
     sys2_scores.append(sys2_score)
 
   # log_info win stats
+  if progress_title:
+    log_info(f"Results: {progress_title}", parameters=parameters)
   wins = [x/float(num_samples) for x in wins]
   log_info('Win ratio: sys1=%.3f, sys2=%.3f, tie=%.3f' % (wins[0], wins[1], wins[2]), parameters=parameters)
   if wins[0] > wins[1]:
