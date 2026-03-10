@@ -14,23 +14,17 @@ This file provides guidance for AI assistants working on projects derived from t
 
 This project uses `uv` for dependency management. The uv project lives in `setup/` (not the project root).
 
-**`setup/.venv` is always a symlink** to a virtual environment created elsewhere (typically on shared storage). Never assume it is a real directory.
-
-To set up from scratch:
-```bash
-# Create venv at desired location and symlink it (run from project root)
-uv venv /path/to/venv --python=3.XX
-ln -s /path/to/venv setup/.venv
-
-# Install dependencies
-cd setup && uv sync
-```
-In general, however, you will NEVER be asked to set up a project from scratch. Always ask for it to be set up for you if it does not exist. 
-
-
-Activate (always from project root):
+Whenever you start work, you must activate (always from project root):
 ```bash
 source setup/.venv/bin/activate
+```
+Especially if you are going to consider uv pip installing anything, you must only do it in this projects setup env. 
+
+If you want to make a package dependency official, add it with (from root):
+```
+cd setup
+uv add <name>
+cd ..
 ```
 
 `setup/uv.lock` must be committed to version control.
