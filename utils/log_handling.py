@@ -7,7 +7,7 @@ def log_error(message, parameters=None):
     parameters = load_parameters(parameters)
     logger = parameters["logger"]
     logger.error(message, stacklevel=2)
-    sys.exit(1)
+    raise RuntimeError()
 
 def log_warn(message, parameters=None):
     parameters = load_parameters(parameters)
