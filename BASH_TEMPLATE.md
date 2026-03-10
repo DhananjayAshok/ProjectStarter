@@ -6,13 +6,12 @@ Reference for bash scripting patterns used in this project family.
 
 ## Standalone Script Template
 
-Every bash script must source `configs/config.env` (provides `storage_dir`, `WANDB_PROJECT`, and all other YAML params as shell variables) and activate the virtual environment. If your project has a `scripts/utils.sh`, source that instead — it handles both.
+Every bash script must source `configs/utils.sh` (provides `storage_dir`, `WANDB_PROJECT`, and all other YAML params as shell variables and activate the virtual environment). 
 
 ```bash
 #!/usr/bin/env bash
 
-source configs/config.env || { echo "configs/config.env not found"; exit 1; }
-source setup/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
+source scripts/utils.sh || { echo "Could not source utils"; exit 1; }
 
 # Define defaults and required args
 declare -A ARGS
@@ -95,17 +94,7 @@ done
 
 ## Shared Bash Infrastructure (`scripts/utils.sh`)
 
-When multiple scripts share logic — most commonly constructing experiment or environment names — define reusable functions in `scripts/utils.sh`. This file handles sourcing so downstream scripts only need one line:
-
-```bash
-source scripts/utils.sh
-```
-
-`utils.sh` itself should begin with:
-```bash
-source configs/config.env || { echo "configs/config.env not found"; exit 1; }
-source setup/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
-```
+When multiple scripts share logic — most commonly constructing experiment or environment names — define reusable functions in `scripts/utils.sh`. This file handles sourcing so downstream scripts only need one line.
 
 ---
 
