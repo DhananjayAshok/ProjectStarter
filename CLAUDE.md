@@ -101,8 +101,15 @@ Register in `main.py`:
 from my_module import my_command
 main.add_command(my_command, name="my_command")
 ```
+
 This pattern allows you to have a single script that handles similar, but different functionalities (e.g. evaluation script that has different commands for different settings).
+
 ---
+
+## Method Philosophy
+
+Always force every argument to every method to be a named parameter with def func(*, arg1, arg, op_arg1=something, ....). 
+
 
 ## Parameter Handling
 
