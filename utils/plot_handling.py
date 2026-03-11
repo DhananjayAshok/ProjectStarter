@@ -6,7 +6,7 @@ import os
 
 
 class Plotter:
-    COLOURS = ["dodgerblue", "orangered", "mediumorchid"]
+    COLOURS = [] # Add your desired colours here, maybe even change this to a dict if you want
 
     def __init__(self, parameters=None):
         self.parameters = load_parameters(parameters)
