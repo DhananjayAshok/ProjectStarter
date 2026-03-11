@@ -69,7 +69,7 @@ def load_parameters(parameters: Optional[dict[str, Any]] = None) -> dict[str, An
         if "logger" not in parameters: # this is a flag that secondary parameters need to be computed
             compute_secondary_parameters(parameters)
         return parameters
-    essential_keys = ["storage_dir", "results_dir", "figure_skip_show"]
+    essential_keys = ["storage_dir", "results_dir"]
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     params = {"project_root": project_root}
     logger = get_logger()
