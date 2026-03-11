@@ -1,8 +1,21 @@
 # This file contains all the fundamental utilities that do not rely on any other file. 
 import os
 import logging
+from typing import Dict, Any
 
-def get_logger(level=logging.INFO, filename=None, add_console=True):
+def get_logger(level: int = logging.INFO, filename: str = None, add_console: bool = True) -> logging.Logger:
+    """
+    Get a logger that can be used to log messages to the console and/or a file.
+
+    :param level: The logging level to use.
+    :type level: int
+    :param filename: The name of the file to log to. If None, no file logging will be done.
+    :type filename: str
+    :param add_console: Whether to add a console handler.
+    :type add_console: bool
+    :return: A configured logger instance.
+    :rtype: logging.Logger
+    """
     fmt_str = "%(asctime)s, [%(levelname)s, %(filename)s:%(lineno)d] %(message)s"
     logging.basicConfig(format=fmt_str)
     logger = logging.getLogger("PROJECT_NAME")
@@ -22,7 +35,13 @@ def get_logger(level=logging.INFO, filename=None, add_console=True):
         logger.propagate = False
     return logger
 
-def meta_dict_to_str(meta_dict, print_mode=False, n_indents=1, skip_write_timestamp=True):
+def meta_dict_to_str(
+    meta_dict: dict,
+    *,
+    print_mode: bool = False,
+    n_indents: int = 1,
+    skip_write_timestamp: bool = True,
+    ) -> str:
     keys = list(meta_dict.keys())
     keys.sort()
     meta_str = ""
@@ -37,12 +56,12 @@ def meta_dict_to_str(meta_dict, print_mode=False, n_indents=1, skip_write_timest
     return meta_str
 
 
-def logger_print_dict(logger, meta_dict, n_indents=1):
+def logger_print_dict(logger: logging.Logger, meta_dict: Dict[str, Any], n_indents: int = 1):
     meta_dict_str = meta_dict_to_str(meta_dict, print_mode=True, n_indents=n_indents, skip_write_timestamp=False)
     logger.info(meta_dict_str)
 
 
-def file_makedir(file_path):
+def file_makedir(file_path: str):
     dirname = os.path.dirname(file_path)
     if dirname != "" and not os.path.exists(dirname):
         os.makedirs(dirname)

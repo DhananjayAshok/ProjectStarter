@@ -6,6 +6,17 @@ import os
 
 
 class Plotter:
+    """
+    A class for handling plot styling and size parameters.
+
+    Principle: All plotting logic should be done elsewhere and captured in plot_functions. This class should just handle the styling and showing/saving of the plots.
+
+    Typical Workflows:
+    1. Create a Plotter object
+    2. Create a plot function using get_stacked_bar_plot_func or by defining your own function that creates a plot.
+    3. Use test_sizes to test different sizes for the plot and find the best one. This will show the plot and ask if you want to keep trying different sizes.
+    4. Do not use plt.show(), instead use plotter.show()
+    """
     COLOURS = [] # Add your desired colours here, maybe even change this to a dict if you want
 
     def __init__(self, parameters=None):
