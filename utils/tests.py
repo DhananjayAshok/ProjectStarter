@@ -1,18 +1,30 @@
+from typing import Any, Optional
+from collections.abc import Sequence
 from utils.parameter_handling import load_parameters
 from utils.log_handling import log_warn, log_info
 from tqdm import tqdm
 import numpy as np
 
-def paired_bootstrap(sys1, sys2, num_samples=10000, sample_ratio=0.5, progress_title=None, parameters=None):
-  ''' Evaluate with paired boostrap
+def paired_bootstrap(sys1: Sequence[float], sys2: Sequence[float], num_samples: int = 10000, sample_ratio: float = 0.5, progress_title: Optional[str] = None, parameters: Optional[dict[str, Any]] = None) -> None:
+  ''' Evaluate with paired bootstrap.
 
-  This compares two systems, performing a significance tests with
+  This compares two systems, performing a significance test with
   paired bootstrap resampling to compare the performance of the two systems.
-  
-  :param sys1: The eval metrics (instance-wise) of system 1
-  :param sys2: The eval metrics (instance-wise) of system 2. Must be of the same length
-  :param num_samples: The number of bootstrap samples to take
-  :param sample_ratio: The ratio of samples to take every time
+
+  :param sys1: The eval metrics (instance-wise) of system 1.
+  :type sys1: Sequence[float]
+  :param sys2: The eval metrics (instance-wise) of system 2. Must be of the same length.
+  :type sys2: Sequence[float]
+  :param num_samples: The number of bootstrap samples to take.
+  :type num_samples: int
+  :param sample_ratio: The ratio of instances to sample on each bootstrap iteration.
+  :type sample_ratio: float
+  :param progress_title: Optional label shown on the tqdm progress bar and in logged results.
+  :type progress_title: str or None
+  :param parameters: Loaded parameters dict for logging. If None, logs to console only.
+  :type parameters: dict[str, Any] or None
+  :return: None. Results are logged via log_info.
+  :rtype: None
   '''
   parameters = load_parameters(parameters)
 
