@@ -69,7 +69,7 @@ class InferenceModel(ABC):
          
         if images is not None:
             if not isinstance(images, list):
-                log_error(f"images must be a list of PIL images or list of lists of PIL Images. Got " {type(images)}")
+                log_error(f"images must be a list of PIL images or list of lists of PIL Images. Got {type(images)}")
             else:
                 if len(images) == 0:
                     log_error(f"images cannot be empty")
@@ -81,8 +81,8 @@ class InferenceModel(ABC):
                             log_error(f"image list contains non images: {type(item)}: {item}")
                 else:
                     for list_item in images:
-                        if not isinstance(item, list):
-                            log_error(f"images must be a list of list of PIL Images, got a {type(item)}:{item}")
+                        if not isinstance(list_item, list):
+                            log_error(f"images must be a list of list of PIL Images, got a {type(list_item)}:{list_item}")
                         for item in list_item:
                             if not isinstance(item, Image.Image):
                                 log_error(f"image list contains non images: {type(item)}: {item}")                                
@@ -130,13 +130,13 @@ class APIModel(InferenceModel, ABC):
             log_error(f"max_queries_per_minute must be at least {MIN_QUERIES_PER_MINUTE}, but got {self.max_queries_per_minute}.", parameters=self.parameters)
 
 
-    def get_encoded_images(self, images: List[Image.Image]) -> List[str]:
+    def get_encoded_images(self, images: list[Image.Image]) -> list[str]:
         """Encodes images to base64 strings for OpenAI API input.
 
         :param images: List of images in Pillow Image format.
-        :type images: List[Image.Image]
+        :type images: list[Image.Image]
         :return: List of base64 encoded image strings.
-        :rtype: List[str]
+        :rtype: list[str]
         """
         cache_dir = self.clear_encoded_image_cache()
         encoded_images = []
@@ -176,29 +176,26 @@ class APIModel(InferenceModel, ABC):
         self.last_query_time = perf_counter()
         return
 
-    def get_output_final(self, output_texts: list[str]) -> list[str]:
+    def get_output_final(self, output_text: str) -> str:
         """
-        Post-process output texts by truncating at the ``[STOP]`` token and stripping whitespace.
+        Post-process a single output text by truncating at the ``[STOP]`` token and stripping whitespace.
 
-        :param output_texts: Raw output strings from the model.
-        :type output_texts: list[str]
-        :return: Cleaned output strings with content after ``[STOP]`` removed.
-        :rtype: list[str]
+        :param output_text: Raw output string from the model.
+        :type output_text: str
+        :return: Cleaned output string with content after ``[STOP]`` removed.
+        :rtype: str
         """
-        final_texts = []
-        for text in output_texts:
-            if "[STOP]" in text:
-                text = text.split("[STOP]")[0]
-            final_texts.append(text.strip())
-        return final_texts
+        if "[STOP]" in output_text:
+            output_text = output_text.split("[STOP]")[0]
+        return output_text.strip()
 
     @abstractmethod
-    def get_image_input_dict(self, image: Image.Image) -> dict:
+    def get_image_input_dict(self, image: str) -> dict:
         """
         Return the API-specific content dict for a single base64-encoded image.
 
         :param image: A base64-encoded image string.
-        :type image: Image.Image
+        :type image: str
         :return: A dictionary formatted for inclusion in the API message content.
         :rtype: dict
         """
@@ -230,20 +227,20 @@ class APIModel(InferenceModel, ABC):
         """
         pass
 
-    def get_output(self, response: Any) -> list[str]:
+    def get_output(self, response: Any) -> str:
         """
-        Extract and post-process output texts from an API response.
+        Extract and post-process the output text from a single API response.
 
-        Calls ``get_output_texts`` to extract raw texts, then applies
-        ``get_output_final`` to clean them.
+        Calls ``get_output_texts`` to extract the raw text, then applies
+        ``get_output_final`` to clean it.
 
         :param response: The raw response object returned by the API client.
         :type response: Any
-        :return: Cleaned output strings.
-        :rtype: list[str]
+        :return: Cleaned output string.
+        :rtype: str
         """
-        output_texts = self.get_output_texts(response)
-        return self.get_output_final(output_texts)
+        output_text = self.get_output_texts(response)
+        return self.get_output_final(output_text)
 
     def do_infer(self, texts: list[str], max_new_tokens: int, images: list[list[Image.Image]] = None) -> list[str]:
         """
@@ -318,10 +315,28 @@ class OpenAIAPIModel(APIModel):
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
     def get_image_input_dict(self, image: str) -> dict:
-        return {"type": "input_image", 
-        "image_url": f"data:image/jpeg;base64,{image}"}
+        """
+        Return the OpenAI-format content dict for a base64-encoded image.
 
-    def query_client(self, messages: list[dict], max_new_tokens: int) -> list[str]:
+        :param image: A base64-encoded JPEG image string.
+        :type image: str
+        :return: A content dict with ``type`` and ``image_url`` fields.
+        :rtype: dict
+        """
+        return {"type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{image}"}
+
+    def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
+        """
+        Send a message to the OpenAI chat completions endpoint.
+
+        :param messages: A list containing the formatted user message dict.
+        :type messages: list[dict]
+        :param max_new_tokens: Maximum number of tokens to generate.
+        :type max_new_tokens: int
+        :return: The raw API response object.
+        :rtype: Any
+        """
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -330,6 +345,14 @@ class OpenAIAPIModel(APIModel):
         return response
 
     def get_output_texts(self, response: Any) -> str:
+        """
+        Extract the output text string from an OpenAI API response.
+
+        :param response: The raw response object from the OpenAI client.
+        :type response: Any
+        :return: The output text string.
+        :rtype: str
+        """
         return response.output.content[0]
 
 
@@ -382,14 +405,32 @@ class AnthropicModel(APIModel):
         self.client = None # TODO
 
     def get_image_input_dict(self, image: str) -> dict:
-        return {"type": "image","source": {
+        """
+        Return the Anthropic-format content dict for a base64-encoded image.
+
+        :param image: A base64-encoded JPEG image string.
+        :type image: str
+        :return: A content dict with ``type`` and ``source`` fields.
+        :rtype: dict
+        """
+        return {"type": "image", "source": {
                     "type": "base64",
                     "media_type": "image/jpeg",
                     "data": image,
                 },
             }
 
-    def query_client(self, messages: list[dict], max_new_tokens: int) -> list[str]:
+    def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
+        """
+        Send a message to the Anthropic messages endpoint.
+
+        :param messages: A list containing the formatted user message dict.
+        :type messages: list[dict]
+        :param max_new_tokens: Maximum number of tokens to generate.
+        :type max_new_tokens: int
+        :return: The raw API response object.
+        :rtype: Any
+        """
         response = self.client.messages.create(
             model=self.model,
             messages=messages,
@@ -397,7 +438,7 @@ class AnthropicModel(APIModel):
         )
         return response
 
-    def get_output_texts(self, response: Any) -> list[str]:
+    def get_output_texts(self, response: Any) -> str:
         breakpoint()
         raise NotImplementedError
 
@@ -466,13 +507,11 @@ class HuggingFaceModelStore:
     kwargs: dict[str, Any] # the kwargs the model was initialised with
 
 
+# Stores all HuggingFace models loaded into GPU. Allows different instantiations
+# of HuggingFaceModel to reuse a loaded model without reloading it every time.
 HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {
 
 }
-
-"""
-Stores all the HuggingFace Models that have been loaded into GPU, allows different instantiations of HuggingFaceModel without having to reload it every time. 
-"""
 
 
 def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
@@ -501,7 +540,10 @@ def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
         if verbose:
             log_warn(f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove.")
 
-def clear_huggingface_model_store():
+def clear_huggingface_model_store() -> None:
+    """
+    Remove all models from the HuggingFace model store and free their GPU memory.
+    """
     for model_name in list(HUGGINGFACE_MODEL_MAPPING.keys()):
         remove_from_huggingface_model_store(model_name)
 
