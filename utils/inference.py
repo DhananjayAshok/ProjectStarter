@@ -69,10 +69,7 @@ class APIModel(ABC):
         self.last_query_time = perf_counter()
         return
 
-    def get_output(self, output: list[str]) -> list[str]:
-        output_texts = []
-        for item in output:
-            output_texts.append(item.content[0].text)
+    def get_output_final(self, output_texts: list[str]) -> list[str]:
         final_texts = []
         for text in output_texts:
             if "[STOP]" in text:
@@ -81,8 +78,41 @@ class APIModel(ABC):
         return final_texts
 
     @abstractmethod
-    def do_infer(texts: list[str], images: list[list[Image.Image]], max_new_tokens):
+    def get_image_input_dict(self, image: Image.Image) -> dict:
         pass
+
+    @abstractmethod
+    def query_client(self, messages: list[dict], max_new_tokens: int) -> list[str]:
+        pass
+
+    @abstractmethod
+    def get_output_texts(self, response: Any) -> list[str]:
+        pass
+
+    def get_output(self, response: Any) -> list[str]:
+        output_texts = self.get_output_texts(response)
+        return self.get_output_final(output_texts)
+
+    def infer(self, texts: list[str], images: list[list[Image.Image]], max_new_tokens: int):
+        all_images = []
+        for img_list in images:
+            all_images.append(self.get_encoded_images(img_list))
+        images = all_images
+        base_input_dict = {
+            "role": "user",
+            "content": [{"type": "text"}],
+        }
+        inputs = []
+        for text, img_list in zip(texts, images):
+            prompt_dict = base_input_dict.copy()
+            prompt_dict["content"][0]["text"] = text
+            for img in img_list:
+                prompt_dict["content"].append(self.get_image_input_dict(img))
+            inputs.append(prompt_dict)
+
+        self.wait()
+        response = self.query_client(inputs, max_new_tokens)
+        return self.get_output(response)      
 
 
 
