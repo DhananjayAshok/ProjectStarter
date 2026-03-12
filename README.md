@@ -19,7 +19,9 @@ This project uses Python with [uv](https://docs.astral.sh/uv/) for dependency ma
 
 Quick start (from project root):
 ```bash
-git pull <> --recursive
+
+git pull <url> --recursive
+cd <project_name>
 cd setup && uv sync
 cd ..
 cd llm-utils/setup && uv sync
