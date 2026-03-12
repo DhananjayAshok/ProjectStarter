@@ -9,7 +9,7 @@ from PIL import Image
 import base64
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from transformers import (
     AutoModel,
     AutoTokenizer,
@@ -21,6 +21,77 @@ import torch
 import gc
 
 MIN_QUERIES_PER_MINUTE = 1
+
+
+class RateLimitedAPIBase:
+    """
+    Mixin that provides rate-limited API client state and ``wait()`` logic.
+
+    Shared by ``APIModel`` (inference) and ``APITextEmbeddingModel`` (embedding)
+    to avoid duplicating the init and rate-limiting code.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: Optional[str],
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
+        self.parameters = load_parameters(parameters)
+        self.model = model
+        self.base_url = base_url
+        self.api_key = api_key
+        self.max_queries_per_minute = max_queries_per_minute
+        self.last_query_time = 0
+        self.seconds_to_wait = 60 / self.max_queries_per_minute
+        if self.max_queries_per_minute < MIN_QUERIES_PER_MINUTE:
+            log_error(
+                f"max_queries_per_minute must be at least {MIN_QUERIES_PER_MINUTE}, "
+                f"but got {self.max_queries_per_minute}.",
+                parameters=self.parameters,
+            )
+
+    def wait(self) -> None:
+        """
+        Enforce the rate limit by sleeping until enough time has elapsed since the last query.
+
+        Updates ``last_query_time`` after waiting.
+        """
+        time_to_wait = self.seconds_to_wait - (perf_counter() - self.last_query_time)
+        if time_to_wait > 0:
+            sleep(time_to_wait)
+        self.last_query_time = perf_counter()
+
+
+class OpenAICompatibleAPIBase(RateLimitedAPIBase):
+    """
+    Mixin that extends ``RateLimitedAPIBase`` with an OpenAI-compatible client.
+
+    Initializes ``self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)``
+    after the rate-limiting state is set up. Shared by all OpenAI-compatible inference
+    and embedding models to avoid repeating client creation in every subclass.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: Optional[str],
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
+        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
 
 class InferenceModel(ABC):
@@ -129,7 +200,7 @@ class InferenceModel(ABC):
             return results
 
 
-class APIModel(InferenceModel, ABC):
+class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
     """
     Abstract base class for API-backed language and vision-language models.
 
@@ -160,19 +231,13 @@ class APIModel(InferenceModel, ABC):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
-        self.parameters = load_parameters(parameters)
-        self.model = model
-        self.base_url = base_url
-        self.api_key = api_key
-        self.max_queries_per_minute = max_queries_per_minute
-        self.last_query_time = 0
-        self.seconds_to_wait = 60 / self.max_queries_per_minute
-        # error out if max_queries_per_minute is less than limit
-        if self.max_queries_per_minute < MIN_QUERIES_PER_MINUTE:
-            log_error(
-                f"max_queries_per_minute must be at least {MIN_QUERIES_PER_MINUTE}, but got {self.max_queries_per_minute}.",
-                parameters=self.parameters,
-            )
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
 
     def get_encoded_images(self, images: list[Image.Image]) -> list[str]:
         """Encodes images to base64 strings for OpenAI API input.
@@ -205,18 +270,6 @@ class APIModel(InferenceModel, ABC):
             shutil.rmtree(cache_dir)
         os.makedirs(cache_dir)
         return cache_dir
-
-    def wait(self) -> None:
-        """
-        Enforce the rate limit by sleeping until enough time has elapsed since the last query.
-
-        Updates ``last_query_time`` after waiting.
-        """
-        time_to_wait = self.seconds_to_wait - (perf_counter() - self.last_query_time)
-        if time_to_wait > 0:
-            sleep(time_to_wait)
-        self.last_query_time = perf_counter()
-        return
 
     def get_output_final(self, output_text: str) -> str:
         """
@@ -335,7 +388,7 @@ class APIModel(InferenceModel, ABC):
         return outputs
 
 
-class OpenAIAPIModel(APIModel):
+class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
     """
     APIModel implementation backed by an OpenAI-compatible client.
 
@@ -372,7 +425,6 @@ class OpenAIAPIModel(APIModel):
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
     def get_image_input_dict(self, image: str) -> dict:
         """
@@ -462,7 +514,6 @@ class OpenAIModel(OpenAIAPIModel):
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
 
 class AnthropicModel(APIModel):
@@ -579,7 +630,6 @@ class vLLMModel(OpenAIAPIModel):
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = OpenAI(base_url=base_url, api_key=self.api_key)
 
 
 class OpenRouterModel(OpenAIAPIModel):
@@ -616,7 +666,6 @@ class OpenRouterModel(OpenAIAPIModel):
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
 
 SPECIAL_MODEL_KINDS = ["lm", "vlm"]
@@ -737,12 +786,52 @@ class HuggingFaceModelStore:
     model_kwargs: dict[str, Any]  # the kwargs the model was initialised with
     users: list[
         HuggingFaceModel
-    ]  # all HuggingFaceModel instances currently using this model.
+    ] = field(default_factory=list)  # all HuggingFaceModel instances currently using this model.
 
 
 # Stores all HuggingFace models loaded into GPU. Allows different instantiations
 # of HuggingFaceModel to reuse a loaded model without reloading it every time.
 HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
+
+
+def hf_set_users_defunct(*, mapping: dict, model_name: str, store_label: str) -> None:
+    if model_name in mapping:
+        for user in mapping[model_name].users:
+            user.is_defunct = True
+    else:
+        log_warn(
+            f"Model {model_name} not found in {store_label}. Cannot set users defunct."
+        )
+
+
+def hf_remove_from_store(
+    *, mapping: dict, model_name: str, store_label: str, verbose: bool = False
+) -> None:
+    if model_name in mapping:
+        if verbose:
+            log_info(f"Removing {model_name} from {store_label} and clearing from GPU.")
+        hf_set_users_defunct(
+            mapping=mapping, model_name=model_name, store_label=store_label
+        )
+        store = mapping.pop(model_name)
+        for param in store.model.parameters():
+            param.data = torch.empty(0, device=param.device)
+        del store
+        gc.collect()
+        torch.cuda.empty_cache()
+    else:
+        if verbose:
+            log_warn(f"Model {model_name} not found in {store_label}. Cannot remove.")
+
+
+def hf_clear_store(*, mapping: dict, store_label: str) -> None:
+    for model_name in list(mapping.keys()):
+        hf_remove_from_store(
+            mapping=mapping, model_name=model_name, store_label=store_label
+        )
+
+
+HF_STORE_LABEL = "HuggingFace model store"
 
 
 def set_users_defunct(model: str) -> None:
@@ -755,16 +844,14 @@ def set_users_defunct(model: str) -> None:
     :param model: The name of the model whose users should be marked defunct.
     :type model: str
     """
-    if model in HUGGINGFACE_MODEL_MAPPING:
-        for user in HUGGINGFACE_MODEL_MAPPING[model].users:
-            user.is_defunct = True
-    else:
-        log_warn(
-            f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
-        )
+    hf_set_users_defunct(
+        mapping=HUGGINGFACE_MODEL_MAPPING,
+        model_name=model,
+        store_label=HF_STORE_LABEL,
+    )
 
 
-def remove_from_huggingface_model_store(model: str, verbose=False) -> None:
+def remove_from_huggingface_model_store(model: str, verbose: bool = False) -> None:
     """
     Remove a model from the HuggingFace model store and free its GPU memory.
 
@@ -777,31 +864,17 @@ def remove_from_huggingface_model_store(model: str, verbose=False) -> None:
     :param verbose: If True, logs removal and missing-key warnings.
     :type verbose: bool
     """
-    if model in HUGGINGFACE_MODEL_MAPPING:
-        if verbose:
-            log_info(
-                f"Removing {model} from HuggingFace model store and clearing from GPU."
-            )
-        set_users_defunct(model)
-        store = HUGGINGFACE_MODEL_MAPPING.pop(model)
-        for param in store.model.parameters():
-            param.data = torch.empty(0, device=param.device)
-        del store
-        gc.collect()
-        torch.cuda.empty_cache()
-    else:
-        if verbose:
-            log_warn(
-                f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
-            )
+    hf_remove_from_store(
+        mapping=HUGGINGFACE_MODEL_MAPPING,
+        model_name=model,
+        store_label=HF_STORE_LABEL,
+        verbose=verbose,
+    )
 
 
 def clear_huggingface_model_store() -> None:
-    """
-    Remove all models from the HuggingFace model store and free their GPU memory.
-    """
-    for model in list(HUGGINGFACE_MODEL_MAPPING.keys()):
-        remove_from_huggingface_model_store(model)
+    """Remove all models from the HuggingFace model store and free their GPU memory."""
+    hf_clear_store(mapping=HUGGINGFACE_MODEL_MAPPING, store_label=HF_STORE_LABEL)
 
 
 def load_special_model(model, model_kind, model_kwargs):
@@ -819,7 +892,7 @@ def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
         )
         processor = AutoTokenizer.from_pretrained(model_name, padding_side="left")
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+            model=model, processor=processor, model_kwargs=model_kwargs
         )
     elif model_kind == "vlm":
         model = AutoModelForImageTextToText.from_pretrained(
@@ -827,12 +900,12 @@ def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
         )
         processor = AutoProcessor.from_pretrained(model_name, padding_side="left")
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+            model=model, processor=processor, model_kwargs=model_kwargs
         )
     elif model_kind in SPECIAL_MODEL_KINDS:
         model, processor = load_special_model(model_name, model_kind, model_kwargs)
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+            model=model, processor=processor, model_kwargs=model_kwargs
         )
     else:
         log_error(
