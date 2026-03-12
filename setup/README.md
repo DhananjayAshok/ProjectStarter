@@ -35,6 +35,7 @@ uv add click huggingface_hub seaborn pandas tqdm numpy openai anthropic Pillow t
 | `torch` | Local HuggingFace model GPU execution | Remove `HuggingFaceModel` and model store from [`utils/lm_inference.py`](../utils/lm_inference.py) |
 | `transformers` | Local HuggingFace model loading (LM + VLM) | Same as `torch` above |
 | `torchvision` | Image preprocessing for VLM inference via `HuggingFaceModel` | Don't use VLMs with `HuggingFaceModel` |
+| `llm-utils` (submodule) | Efficient, scalable, offline, batched LLM inference | Remove [`scripts/llm-utils.sh`](../scripts/llm-utils.sh) and remove the submodule |
 
 This creates a uv.lock file, that must be committed to version control. This will also create the environment. Source it with (from root):
 
@@ -42,7 +43,9 @@ This creates a uv.lock file, that must be committed to version control. This wil
 source setup/.venv/bin/activate
 ```
 
-# Instruction For Project Reproduction (Replace 3.XX with version and put in README)
+# Instruction For Project Reproduction 
+
+(Replace 3.XX with version and put in README)
 
 This project uses Python 3.XX with [uv](https://docs.astral.sh/uv/guides/projects/) to manage dependencies, but there is one significant design decision: the 'uv project' is in the `setup` directory, as opposed to root. This means that once you've created the environment, you will find the virtual environment in `setup/.venv/`. 
 

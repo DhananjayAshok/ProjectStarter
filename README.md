@@ -4,14 +4,26 @@ A template for Python research projects. Provides standardised environment setup
 
 ---
 
+## Checklist
+
+1. Do [setup](setup/README.md)
+2. Checkout llm-utils to the latest commit
+3. Create symlink with llm-utils/setup/.venv and wherever your actual env is
+4. Add all and commit
+
+
+
 ## Reproduction
 
 This project uses Python with [uv](https://docs.astral.sh/uv/) for dependency management. See [setup/README.md](setup/README.md) for full instructions.
 
 Quick start (from project root):
 ```bash
+git pull <> --recursive
 cd setup && uv sync
 cd ..
+cd llm-utils/setup && uv sync
+cd ../../
 source setup/.venv/bin/activate
 ```
 
@@ -19,6 +31,8 @@ Then fill in your local values in `configs/private_vars.yaml` (replacing any `PL
 ```bash
 python configs/create_env_file.py
 ```
+
+- Maybe a line on pulling data
 
 ---
 
