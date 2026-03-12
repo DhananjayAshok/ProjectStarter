@@ -504,7 +504,8 @@ class OpenRouterModel(OpenAIAPIModel):
 class HuggingFaceModelStore:
     model: AutoModel
     processor: AutoProcessor
-    kwargs: dict[str, Any] # the kwargs the model was initialised with
+    model_kwargs: dict[str, Any] # the kwargs the model was initialised with
+    users: list[HuggingFaceModel] # all HuggingFaceModel instances currently using this model.
 
 
 # Stores all HuggingFace models loaded into GPU. Allows different instantiations
@@ -513,6 +514,22 @@ HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {
 
 }
 
+
+def set_users_defunct(model_name: str) -> None:
+    """
+    Mark all HuggingFaceModel instances using the given model name as defunct.
+
+    This should be called before removing a model from the store to prevent
+    future inference calls on HuggingFaceModel instances that rely on the removed model.
+
+    :param model_name: The name of the model whose users should be marked defunct.
+    :type model_name: str
+    """
+    if model_name in HUGGINGFACE_MODEL_MAPPING:
+        for user in HUGGINGFACE_MODEL_MAPPING[model_name].users:
+            user.is_defunct = True
+    else:
+        log_warn(f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct.")
 
 def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
     """
@@ -530,6 +547,7 @@ def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
     if model_name in HUGGINGFACE_MODEL_MAPPING:
         if verbose:
             log_info(f"Removing {model_name} from HuggingFace model store and clearing from GPU.")
+        set_users_defunct(model_name)
         store = HUGGINGFACE_MODEL_MAPPING.pop(model_name)
         for param in store.model.parameters():
             param.data = torch.empty(0, device=param.device)
@@ -548,9 +566,56 @@ def clear_huggingface_model_store() -> None:
         remove_from_huggingface_model_store(model_name)
 
 
+
+SPECIAL_MODEL_CLASSES = ["qwen3-vl"]
+
+def load_special_model(model_name, model_class, model_kwargs):
+    pass
+
+
+def load_model_into_store(model_name, model_class, model_kwargs) -> None:
+    remove_from_huggingface_model_store(model_name, verbose=False)
+    if model_class is None:
+        pass # generic loading
+    elif model_class in SPECIAL_MODEL_CLASSES:
+        load_special_model(model_name, model_class, model_kwargs)
+    else:
+        log_error(f"Model class {model_class} not recognised. Cannot load model {model_name} into store.")
+
+
+def infer_model_class(model_name: str) -> Optional[str]:
+    special_inclusions = []
+    for special_class in SPECIAL_MODEL_CLASSES:
+        if special_class.lower() in model_name.lower():
+            special_inclusions.append(special_class)
+    if len(special_inclusions) == 1:
+        return special_inclusions[0]
+    return None
+
+
+
+
 class HuggingFaceModel:
-    def __init__(self, model_name: str, model_class: str = None):
-        pass
+    def __init__(self, model_name: str, model_class: str = None, parameters: dict[str, Any] = None, **model_kwargs) -> None:
+        self.model_name = model_name
+        if model_class is None:
+            model_class = infer_model_class(model_name)
+        self.model_class = model_class
+        self.model_kwargs = model_kwargs
+        self.parameters = parameters
+        self.is_defunct = False
+        if model_name in HUGGINGFACE_MODEL_MAPPING:
+            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model_name].model_kwargs
+            if used_kwargs != model_kwargs:
+                log_warn(f"Model {model_name} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct.")
+                remove_from_huggingface_model_store(model_name)
+                load_model_into_store(model_name, model_class, model_kwargs)                
+        else:
+            load_model_into_store(model_name, model_class, model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model_name].users.append(self)
+
+
+
 
     def do_infer(self, texts: list[str], max_new_tokens: int, images: list[list[Image.Image]] = None) -> list[str]:
         pass
