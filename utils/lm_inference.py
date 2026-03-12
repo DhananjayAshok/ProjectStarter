@@ -1,9 +1,8 @@
-from pyexpat import model
-
 from openai import OpenAI
+from anthropic import Anthropic
 from time import sleep, perf_counter
 from typing import Optional, Any, Union
-from utils.parameters import load_parameters
+from utils.parameter_handling import load_parameters
 from utils.log_handling import log_info, log_warn, log_error
 import shutil
 from PIL import Image
@@ -106,6 +105,7 @@ class InferenceModel(ABC):
                             log_error(
                                 f"image list contains non images: {type(item)}: {item}"
                             )
+                    images = [images]
                 else:
                     for list_item in images:
                         if not isinstance(list_item, list):
@@ -117,7 +117,13 @@ class InferenceModel(ABC):
                                 log_error(
                                     f"image list contains non images: {type(item)}: {item}"
                                 )
-        results = self.do_infer(texts, max_new_tokens, images=images)
+            if len(texts) != len(images):
+                log_error(
+                    f"Number of text prompts and number of image lists must be the same. Got {len(texts)} text prompts and {len(images)} image lists."
+                )
+        else:
+            images = [[] for _ in texts]
+        results = self.do_infer(texts, images, max_new_tokens)
         if passed_in_str:
             return results[0]
         else:
@@ -198,6 +204,7 @@ class APIModel(InferenceModel, ABC):
         cache_dir = os.path.join(self.parameters["tmp_dir"], "api_image_cache")
         if os.path.exists(cache_dir):
             shutil.rmtree(cache_dir)
+        os.makedirs(cache_dir)
         return cache_dir
 
     def wait(self) -> None:
@@ -281,8 +288,8 @@ class APIModel(InferenceModel, ABC):
     def do_infer(
         self,
         texts: list[str],
+        images: list[list[Image.Image]],
         max_new_tokens: int,
-        images: list[list[Image.Image]] = None,
     ) -> list[str]:
         """
         Encodes all images to base64, constructs API message dicts, enforces
@@ -297,9 +304,7 @@ class APIModel(InferenceModel, ABC):
         :return: Post-processed output strings, one per sample.
         :rtype: list[str]
         """
-        if images is None:
-            images = [[] for _ in texts]
-        else:
+        if len(images[0]) != 0:
             all_images = []
             for img_list in images:
                 all_images.append(self.get_encoded_images(img_list))
@@ -338,7 +343,6 @@ class OpenAIAPIModel(APIModel):
     Initializes an ``openai.OpenAI`` client pointed at the given base URL.
     Suitable as a base for any service that exposes an OpenAI-compatible API.
     """
-
     def __init__(
         self,
         model: str,
@@ -379,7 +383,7 @@ class OpenAIAPIModel(APIModel):
         :return: A content dict with ``type`` and ``image_url`` fields.
         :rtype: dict
         """
-        return {"type": "input_image", "image_url": f"data:image/jpeg;base64,{image}"}
+        return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}}
 
     def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
         """
@@ -408,7 +412,18 @@ class OpenAIAPIModel(APIModel):
         :return: The output text string.
         :rtype: str
         """
-        return response.output.content[0]
+        text = ""
+        message = response.choices[0].message
+        if hasattr(message, "reasoning"):
+            text = "Reasoning: " + message.reasoning
+        content = response.choices[0].message.content
+        if content is not None:
+            if text != "":
+                text += "\nResponse: "
+            text = text + " " + content
+        if text.strip() == "":
+            log_warn(f"Received empty output text from model: {response}")
+        return text.strip()
 
 
 class OpenAIModel(OpenAIAPIModel):
@@ -481,7 +496,7 @@ class AnthropicModel(APIModel):
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = None  # TODO
+        self.client = Anthropic(api_key=self.api_key)
 
     def get_image_input_dict(self, image: str) -> dict:
         """
@@ -520,8 +535,7 @@ class AnthropicModel(APIModel):
         return response
 
     def get_output_texts(self, response: Any) -> str:
-        breakpoint()
-        raise NotImplementedError
+        return response.content[0].text
 
 
 class vLLMModel(OpenAIAPIModel):
@@ -576,7 +590,6 @@ class OpenRouterModel(OpenAIAPIModel):
     def __init__(
         self,
         model: str,
-        api_key: Optional[str] = None,
         max_queries_per_minute: int = 60,
         parameters: dict[str, Any] = None,
     ) -> None:
@@ -592,6 +605,7 @@ class OpenRouterModel(OpenAIAPIModel):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
+        api_key = os.environ["OPENROUTER_API_KEY"]
         super().__init__(
             model=model,
             base_url="https://openrouter.ai/api/v1",
@@ -602,35 +616,53 @@ class OpenRouterModel(OpenAIAPIModel):
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
 
-SPECIAL_MODEL_CLASSES = ["default-lm", "default-vlm"]
+SPECIAL_MODEL_KINDS = ["lm", "vlm"]
+VLM_MODELS = ["vlm"]
+
+for model in VLM_MODELS:
+    if model not in SPECIAL_MODEL_KINDS:
+        log_error(f"Model {model} is in VLM_MODELS but not in SPECIAL_MODEL_KINDS. Please add it to SPECIAL_MODEL_KINDS.")
 
 
-class HuggingFaceModel:
+def get_inputs(model_kind, processor, messages):
+    if model_kind in ["lm", "vlm"]:
+        inputs = processor.apply_chat_template(
+                messages, add_generation_prompt=True,
+                tokenize=True, return_dict=True, return_tensors="pt"
+            )
+        return inputs
+    else:
+        raise NotImplementedError
+    
+    
+
+
+class HuggingFaceModel(InferenceModel):
     def __init__(
         self,
-        model_name: str,
-        model_class: str = None,
+        model: str,
+        model_kind: str = None,
         parameters: dict[str, Any] = None,
         **model_kwargs,
     ) -> None:
-        self.model_name = model_name
-        if model_class is None:
-            model_class = infer_model_class(model_name, error_out=True)
-        self.model_class = model_class
+        self.model = model
+        if model_kind is None:
+            model_kind = infer_model_kind(model, error_out=True)
+        self.model_kind = model_kind
         self.model_kwargs = model_kwargs
         self.parameters = parameters
         self.is_defunct = False
-        if model_name in HUGGINGFACE_MODEL_MAPPING:
-            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model_name].model_kwargs
+        if model in HUGGINGFACE_MODEL_MAPPING:
+            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
             if used_kwargs != model_kwargs:
                 log_warn(
-                    f"Model {model_name} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
+                    f"Model {model} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
                 )
-                remove_from_huggingface_model_store(model_name)
-                load_model_into_store(model_name, model_class, model_kwargs)
+                remove_from_huggingface_model_store(model)
+                load_model_into_store(model, model_kind, model_kwargs)
         else:
-            load_model_into_store(model_name, model_class, model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model_name].users.append(self)
+            load_model_into_store(model, model_kind, model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
 
     def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
         content = [{"type": "text", "text": text}]
@@ -647,23 +679,29 @@ class HuggingFaceModel:
     def do_infer(
         self,
         texts: list[str],
+        images: list[list[Image.Image]],        
         max_new_tokens: int,
-        images: list[list[Image.Image]] = None,
     ) -> list[str]:
         if self.is_defunct:
             log_error(
                 f"Cannot run inference on defunct model.",
                 parameters=self.parameters,
             )
+        if len(images[0]) != 0 and self.model_kind not in VLM_MODELS:
+            log_error(f"Model {self.model} of kind {self.model_kind} cannot handle image inputs.")
         messages = [
             self.get_single_message_list(text, img_list)
             for text, img_list in zip(texts, images)
         ]
-        processor = HUGGINGFACE_MODEL_MAPPING[self.model_name].processor
-        model = HUGGINGFACE_MODEL_MAPPING[self.model_name].model
-        inputs = processor.apply_chat_template(
-            messages, tokenize=True, return_dict=True, return_tensors="pt"
-        )
+        processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
+        model = HUGGINGFACE_MODEL_MAPPING[self.model].model
+        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
+        tokenizer = None
+        if hasattr(processor, "tokenizer"):
+            tokenizer = processor.tokenizer
+        else:
+            tokenizer = processor
+        start_index = inputs["input_ids"].shape[1]
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
@@ -673,10 +711,15 @@ class HuggingFaceModel:
             top_k=None,
             repetition_penalty=1.2,
             stop_strings=["[STOP]"],
-            tokenizer=processor.tokenizer,
+            pad_token_id=tokenizer.eos_token_id,
+            tokenizer=tokenizer,
         )
-        output_texts = processor.batch_decode(outputs, skip_special_tokens=True)
-        return output_texts
+        output_only = outputs[:, start_index:]
+        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
+        final_texts = []
+        for text in output_texts:
+            final_texts.append(text.lstrip("assistant").strip())
+        return final_texts
 
 
 @dataclass
@@ -694,45 +737,45 @@ class HuggingFaceModelStore:
 HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
 
 
-def set_users_defunct(model_name: str) -> None:
+def set_users_defunct(model: str) -> None:
     """
     Mark all HuggingFaceModel instances using the given model name as defunct.
 
     This should be called before removing a model from the store to prevent
     future inference calls on HuggingFaceModel instances that rely on the removed model.
 
-    :param model_name: The name of the model whose users should be marked defunct.
-    :type model_name: str
+    :param model: The name of the model whose users should be marked defunct.
+    :type model: str
     """
-    if model_name in HUGGINGFACE_MODEL_MAPPING:
-        for user in HUGGINGFACE_MODEL_MAPPING[model_name].users:
+    if model in HUGGINGFACE_MODEL_MAPPING:
+        for user in HUGGINGFACE_MODEL_MAPPING[model].users:
             user.is_defunct = True
     else:
         log_warn(
-            f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
+            f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
         )
 
 
-def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
+def remove_from_huggingface_model_store(model: str, verbose=False) -> None:
     """
     Remove a model from the HuggingFace model store and free its GPU memory.
 
     Zeros out all parameter tensors in-place on the GPU (avoiding a CPU transfer),
     then forces Python GC and flushes PyTorch's CUDA cache.
-    Does nothing if ``model_name`` is not in the store.
+    Does nothing if ``model`` is not in the store.
 
-    :param model_name: The name of the model to remove.
-    :type model_name: str
+    :param model: The name of the model to remove.
+    :type model: str
     :param verbose: If True, logs removal and missing-key warnings.
     :type verbose: bool
     """
-    if model_name in HUGGINGFACE_MODEL_MAPPING:
+    if model in HUGGINGFACE_MODEL_MAPPING:
         if verbose:
             log_info(
-                f"Removing {model_name} from HuggingFace model store and clearing from GPU."
+                f"Removing {model} from HuggingFace model store and clearing from GPU."
             )
-        set_users_defunct(model_name)
-        store = HUGGINGFACE_MODEL_MAPPING.pop(model_name)
+        set_users_defunct(model)
+        store = HUGGINGFACE_MODEL_MAPPING.pop(model)
         for param in store.model.parameters():
             param.data = torch.empty(0, device=param.device)
         del store
@@ -741,7 +784,7 @@ def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
     else:
         if verbose:
             log_warn(
-                f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
+                f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
             )
 
 
@@ -749,17 +792,18 @@ def clear_huggingface_model_store() -> None:
     """
     Remove all models from the HuggingFace model store and free their GPU memory.
     """
-    for model_name in list(HUGGINGFACE_MODEL_MAPPING.keys()):
-        remove_from_huggingface_model_store(model_name)
+    for model in list(HUGGINGFACE_MODEL_MAPPING.keys()):
+        remove_from_huggingface_model_store(model)
 
 
-def load_special_model(model_name, model_class, model_kwargs):
+def load_special_model(model, model_kind, model_kwargs):
     raise NotImplementedError
 
 
-def load_model_into_store(model_name, model_class, model_kwargs) -> None:
+def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
     remove_from_huggingface_model_store(model_name, verbose=False)
-    if model_class == "default-lm":
+    log_info(f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}")
+    if model_kind == "lm":
         model = AutoModelForCausalLM.from_pretrained(
             model_name, device_map="auto", **model_kwargs
         )
@@ -767,32 +811,32 @@ def load_model_into_store(model_name, model_class, model_kwargs) -> None:
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
             model=model, processor=processor, model_kwargs=model_kwargs, users=[]
         )
-    elif model_class == "default-vlm":
+    elif model_kind == "vlm":
         model = AutoModelForImageTextToText.from_pretrained(
             model_name, device_map="auto", **model_kwargs
         )
-        processor = AutoProcessor.from_pretrained(model_name)
+        processor = AutoProcessor.from_pretrained(model_name, padding_side="left")
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
             model=model, processor=processor, model_kwargs=model_kwargs, users=[]
         )
-    elif model_class in SPECIAL_MODEL_CLASSES:
-        model, processor = load_special_model(model_name, model_class, model_kwargs)
+    elif model_kind in SPECIAL_MODEL_KINDS:
+        model, processor = load_special_model(model_name, model_kind, model_kwargs)
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
             model=model, processor=processor, model_kwargs=model_kwargs, users=[]
         )
     else:
         log_error(
-            f"Model class {model_class} not recognised. Cannot load model {model_name} into store."
+            f"Model class {model_kind} not recognised. Cannot load model {model_name} into store."
         )
 
 
-def infer_model_class(model_name: str, error_out: bool = False) -> Optional[str]:
+def infer_model_kind(model: str, error_out: bool = False) -> Optional[str]:
     special_inclusions = []
-    for special_class in SPECIAL_MODEL_CLASSES:
-        if special_class.lower() in model_name.lower():
+    for special_class in SPECIAL_MODEL_KINDS:
+        if special_class.lower() in model.lower():
             special_inclusions.append(special_class)
     if len(special_inclusions) == 1:
         return special_inclusions[0]
     if error_out:
-        log_error(f"Could not infer model class for {model_name}.")
+        log_error(f"Could not infer model class for {model}. Specify `model_kind` as one of: {SPECIAL_MODEL_KINDS}")
     return None

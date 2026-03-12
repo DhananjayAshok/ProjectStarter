@@ -21,9 +21,20 @@ We never use this main file, so delete it. This will create a project with the n
 
 You can now add pip packages with:
 ```console
-uv add click huggingface_hub seaborn pandas tqdm numpy
+uv add click huggingface_hub seaborn pandas tqdm numpy openai anthropic Pillow torch transformers torchvision
 ```
-These packages are required for this codebase to run, but you can remove the `huggingface_hub` dependency by removing [`sync_data.py`](../sync_data.py) and remove the `seaborn`/`pandas` dependencies by removing [Plotter](../utils/plot_handling.py).
+
+| Package | Features provided | How to remove |
+|---|---|---|
+| `click` | CLI commands, `main.py` entry points | Remove all `@click.command` files and `main.py` |
+| `huggingface_hub` | HuggingFace dataset/model sync | Remove [`sync_data.py`](../sync_data.py) |
+| `seaborn`, `pandas` | Plotting utilities | Remove [`utils/plot_handling.py`](../utils/plot_handling.py) |
+| `openai` | `OpenAIModel`, `vLLMModel`, `OpenRouterModel` | Remove those classes from [`utils/lm_inference.py`](../utils/lm_inference.py) |
+| `anthropic` | `AnthropicModel` | Remove `AnthropicModel` from [`utils/lm_inference.py`](../utils/lm_inference.py) |
+| `Pillow` | Image inputs for all VLM inference | Remove image support from [`utils/lm_inference.py`](../utils/lm_inference.py) |
+| `torch` | Local HuggingFace model GPU execution | Remove `HuggingFaceModel` and model store from [`utils/lm_inference.py`](../utils/lm_inference.py) |
+| `transformers` | Local HuggingFace model loading (LM + VLM) | Same as `torch` above |
+| `torchvision` | Image preprocessing for VLM inference via `HuggingFaceModel` | Don't use VLMs with `HuggingFaceModel` |
 
 This creates a uv.lock file, that must be committed to version control. This will also create the environment. Source it with (from root):
 
