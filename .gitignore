@@ -176,3 +176,5 @@ cython_debug/
 setup/.venv
 configs/config.env
 results/
+storage/
+*.out

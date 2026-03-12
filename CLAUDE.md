@@ -216,3 +216,7 @@ extended_args = add_meta_details(base_args, {"val_loss": 0.42, "epoch": 5})
 ```
 
 ---
+
+## Permissions
+
+Read .claude/settings.json for the list of permitted commands. You can compose any of these freely while you work. Do not ask for permission if it is specified in this list. 

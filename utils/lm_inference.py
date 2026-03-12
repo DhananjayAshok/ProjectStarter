@@ -16,6 +16,8 @@ from transformers import (
     AutoProcessor,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
 )
 import torch
 import gc
@@ -35,15 +37,11 @@ class RateLimitedAPIBase:
         self,
         *,
         model: str,
-        base_url: Optional[str],
-        api_key: Optional[str] = None,
         max_queries_per_minute: int = 60,
         parameters: dict[str, Any] = None,
     ) -> None:
         self.parameters = load_parameters(parameters)
         self.model = model
-        self.base_url = base_url
-        self.api_key = api_key
         self.max_queries_per_minute = max_queries_per_minute
         self.last_query_time = 0
         self.seconds_to_wait = 60 / self.max_queries_per_minute
@@ -86,12 +84,10 @@ class OpenAICompatibleAPIBase(RateLimitedAPIBase):
     ) -> None:
         super().__init__(
             model=model,
-            base_url=base_url,
-            api_key=api_key,
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
 
 
 class InferenceModel(ABC):
@@ -212,8 +208,6 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
     def __init__(
         self,
         model: str,
-        base_url: str,
-        api_key: Optional[str] = None,
         max_queries_per_minute: int = 60,
         parameters: dict[str, Any] = None,
     ) -> None:
@@ -222,10 +216,6 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
 
         :param model: The model identifier string (e.g. ``"gpt-4o"``).
         :type model: str
-        :param base_url: The base URL for the API endpoint.
-        :type base_url: str
-        :param api_key: The API key for authentication. If None, uses environment variables.
-        :type api_key: str or None
         :param max_queries_per_minute: Maximum number of queries allowed per minute. Must be at least 1.
         :type max_queries_per_minute: int
         :param parameters: Loaded parameters dict. If None, loads from config.
@@ -233,8 +223,6 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         """
         super().__init__(
             model=model,
-            base_url=base_url,
-            api_key=api_key,
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
@@ -251,6 +239,8 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         encoded_images = []
         for i, img in enumerate(images):
             img_path = os.path.join(cache_dir, f"image_{i}.jpg")
+            if img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
             img.save(img_path, format="JPEG")
             with open(img_path, "rb") as image_file:
                 encoded_images.append(
@@ -469,7 +459,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
         """
         text = ""
         message = response.choices[0].message
-        if hasattr(message, "reasoning"):
+        if hasattr(message, "reasoning") and message.reasoning is not None:
             text = "Reasoning: " + message.reasoning
         content = response.choices[0].message.content
         if content is not None:
@@ -545,12 +535,10 @@ class AnthropicModel(APIModel):
         """
         super().__init__(
             model=model,
-            base_url=None,
-            api_key=api_key,
             max_queries_per_minute=max_queries_per_minute,
             parameters=parameters,
         )
-        self.client = Anthropic(api_key=self.api_key)
+        self.client = Anthropic(api_key=api_key)
 
     def get_image_input_dict(self, image: str) -> dict:
         """
@@ -692,7 +680,37 @@ def get_inputs(model_kind, processor, messages):
         raise NotImplementedError
 
 
-class HuggingFaceModel(InferenceModel):
+class HuggingFaceModelBase(ABC):
+    """
+    Abstract base for all HuggingFace model wrappers (inference and embedding).
+
+    Manages registration in the shared ``HUGGINGFACE_MODEL_MAPPING`` store,
+    tracks model kwargs, and marks instances as defunct when the underlying
+    model is evicted from GPU memory.
+    """
+
+    def _init_store(self, *, model: str, parameters, model_kwargs: dict, load_fn) -> None:
+        """Register this instance in the shared store, loading the model if needed."""
+        self.model = model
+        self.parameters = load_parameters(parameters)
+        self.model_kwargs = model_kwargs
+        self.is_defunct = False
+        if model in HUGGINGFACE_MODEL_MAPPING:
+            existing_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
+            if existing_kwargs != model_kwargs:
+                log_warn(
+                    f"Model {model} already loaded with different kwargs. "
+                    f"Passed: {model_kwargs}, loaded: {existing_kwargs}. Reloading. "
+                    "Existing instances of this model will be marked defunct."
+                )
+                remove_from_model_store(model)
+                load_fn(model_name=model, model_kwargs=model_kwargs)
+        else:
+            load_fn(model_name=model, model_kwargs=model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
+
+
+class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
     def __init__(
         self,
         model: str,
@@ -700,24 +718,15 @@ class HuggingFaceModel(InferenceModel):
         parameters: dict[str, Any] = None,
         **model_kwargs,
     ) -> None:
-        self.model = model
         if model_kind is None:
             model_kind = infer_model_kind(model, error_out=True)
         self.model_kind = model_kind
-        self.model_kwargs = model_kwargs
-        self.parameters = parameters
-        self.is_defunct = False
-        if model in HUGGINGFACE_MODEL_MAPPING:
-            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
-            if used_kwargs != model_kwargs:
-                log_warn(
-                    f"Model {model} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
-                )
-                remove_from_huggingface_model_store(model)
-                load_model_into_store(model, model_kind, model_kwargs)
-        else:
-            load_model_into_store(model, model_kind, model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
+        self._init_store(
+            model=model,
+            parameters=parameters,
+            model_kwargs=model_kwargs,
+            load_fn=lambda *, model_name, model_kwargs: load_model_into_store(model_name, model_kind, model_kwargs),
+        )
 
     def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
         content = [{"type": "text", "text": text}]
@@ -746,135 +755,72 @@ class HuggingFaceModel(InferenceModel):
             log_error(
                 f"Model {self.model} of kind {self.model_kind} cannot handle image inputs."
             )
-        messages = [
-            self.get_single_message_list(text, img_list)
-            for text, img_list in zip(texts, images)
-        ]
         processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
         model = HUGGINGFACE_MODEL_MAPPING[self.model].model
-        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
-        tokenizer = None
-        if hasattr(processor, "tokenizer"):
-            tokenizer = processor.tokenizer
-        else:
-            tokenizer = processor
-        start_index = inputs["input_ids"].shape[1]
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            top_p=None,
-            temperature=None,
-            top_k=None,
-            repetition_penalty=1.2,
-            stop_strings=["[STOP]"],
-            pad_token_id=tokenizer.eos_token_id,
-            tokenizer=tokenizer,
-        )
-        output_only = outputs[:, start_index:]
-        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         final_texts = []
-        for text in output_texts:
-            final_texts.append(text.lstrip("assistant").strip())
+        for text, img_list in zip(texts, images):
+            msg = self.get_single_message_list(text, img_list)
+            inputs = get_inputs(self.model_kind, processor, [msg]).to(model.device)
+            start_index = inputs["input_ids"].shape[1]
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                top_p=None,
+                temperature=None,
+                top_k=None,
+                repetition_penalty=1.2,
+                stop_strings=["[STOP]"],
+                pad_token_id=tokenizer.eos_token_id,
+                tokenizer=tokenizer,
+            )
+            output_only = outputs[:, start_index:]
+            decoded = processor.batch_decode(output_only, skip_special_tokens=True)
+            final_texts.append(decoded[0].lstrip("assistant").strip())
         return final_texts
 
 
 @dataclass
 class HuggingFaceModelStore:
-    model: AutoModel
-    processor: AutoProcessor
-    model_kwargs: dict[str, Any]  # the kwargs the model was initialised with
-    users: list[
-        HuggingFaceModel
-    ] = field(default_factory=list)  # all HuggingFaceModel instances currently using this model.
+    model: PreTrainedModel
+    processor: PreTrainedTokenizerBase | Any  # tokenizers are PreTrainedTokenizerBase; processors (e.g. AutoProcessor) have no common base
+    model_kwargs: dict[str, Any]
+    users: list["HuggingFaceModelBase"] = field(default_factory=list)
 
 
-# Stores all HuggingFace models loaded into GPU. Allows different instantiations
-# of HuggingFaceModel to reuse a loaded model without reloading it every time.
+# Single shared store for all HuggingFace model wrappers (inference and embedding).
 HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
 
 
-def hf_set_users_defunct(*, mapping: dict, model_name: str, store_label: str) -> None:
-    if model_name in mapping:
-        for user in mapping[model_name].users:
+def set_users_defunct(model_name: str) -> None:
+    if model_name in HUGGINGFACE_MODEL_MAPPING:
+        for user in HUGGINGFACE_MODEL_MAPPING[model_name].users:
             user.is_defunct = True
     else:
-        log_warn(
-            f"Model {model_name} not found in {store_label}. Cannot set users defunct."
-        )
+        log_warn(f"Model {model_name} not found in store. Cannot set users defunct.")
 
 
-def hf_remove_from_store(
-    *, mapping: dict, model_name: str, store_label: str, verbose: bool = False
-) -> None:
-    if model_name in mapping:
+def remove_from_model_store(model_name: str, verbose: bool = False) -> None:
+    """Remove a model from the store and free its GPU memory."""
+    if model_name in HUGGINGFACE_MODEL_MAPPING:
         if verbose:
-            log_info(f"Removing {model_name} from {store_label} and clearing from GPU.")
-        hf_set_users_defunct(
-            mapping=mapping, model_name=model_name, store_label=store_label
-        )
-        store = mapping.pop(model_name)
+            log_info(f"Removing {model_name} from store and clearing from GPU.")
+        set_users_defunct(model_name)
+        store = HUGGINGFACE_MODEL_MAPPING.pop(model_name)
         for param in store.model.parameters():
             param.data = torch.empty(0, device=param.device)
         del store
         gc.collect()
         torch.cuda.empty_cache()
-    else:
-        if verbose:
-            log_warn(f"Model {model_name} not found in {store_label}. Cannot remove.")
+    elif verbose:
+        log_warn(f"Model {model_name} not found in store. Cannot remove.")
 
 
-def hf_clear_store(*, mapping: dict, store_label: str) -> None:
-    for model_name in list(mapping.keys()):
-        hf_remove_from_store(
-            mapping=mapping, model_name=model_name, store_label=store_label
-        )
-
-
-HF_STORE_LABEL = "HuggingFace model store"
-
-
-def set_users_defunct(model: str) -> None:
-    """
-    Mark all HuggingFaceModel instances using the given model name as defunct.
-
-    This should be called before removing a model from the store to prevent
-    future inference calls on HuggingFaceModel instances that rely on the removed model.
-
-    :param model: The name of the model whose users should be marked defunct.
-    :type model: str
-    """
-    hf_set_users_defunct(
-        mapping=HUGGINGFACE_MODEL_MAPPING,
-        model_name=model,
-        store_label=HF_STORE_LABEL,
-    )
-
-
-def remove_from_huggingface_model_store(model: str, verbose: bool = False) -> None:
-    """
-    Remove a model from the HuggingFace model store and free its GPU memory.
-
-    Zeros out all parameter tensors in-place on the GPU (avoiding a CPU transfer),
-    then forces Python GC and flushes PyTorch's CUDA cache.
-    Does nothing if ``model`` is not in the store.
-
-    :param model: The name of the model to remove.
-    :type model: str
-    :param verbose: If True, logs removal and missing-key warnings.
-    :type verbose: bool
-    """
-    hf_remove_from_store(
-        mapping=HUGGINGFACE_MODEL_MAPPING,
-        model_name=model,
-        store_label=HF_STORE_LABEL,
-        verbose=verbose,
-    )
-
-
-def clear_huggingface_model_store() -> None:
-    """Remove all models from the HuggingFace model store and free their GPU memory."""
-    hf_clear_store(mapping=HUGGINGFACE_MODEL_MAPPING, store_label=HF_STORE_LABEL)
+def clear_model_store() -> None:
+    """Remove all models from the store and free their GPU memory."""
+    for model_name in list(HUGGINGFACE_MODEL_MAPPING.keys()):
+        remove_from_model_store(model_name)
 
 
 def load_special_model(model, model_kind, model_kwargs):
@@ -882,23 +828,23 @@ def load_special_model(model, model_kind, model_kwargs):
 
 
 def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
-    remove_from_huggingface_model_store(model_name, verbose=False)
+    remove_from_model_store(model_name, verbose=False)
     log_info(
         f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}"
     )
     if model_kind == "lm":
         model = AutoModelForCausalLM.from_pretrained(
-            model_name, device_map="auto", **model_kwargs
+            model_name, device_map="auto", trust_remote_code=True, **model_kwargs
         )
-        processor = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        processor = AutoTokenizer.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
             model=model, processor=processor, model_kwargs=model_kwargs
         )
     elif model_kind == "vlm":
         model = AutoModelForImageTextToText.from_pretrained(
-            model_name, device_map="auto", **model_kwargs
+            model_name, device_map="auto", trust_remote_code=True, **model_kwargs
         )
-        processor = AutoProcessor.from_pretrained(model_name, padding_side="left")
+        processor = AutoProcessor.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
         HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
             model=model, processor=processor, model_kwargs=model_kwargs
         )

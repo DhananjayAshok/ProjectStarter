@@ -10,8 +10,8 @@ from utils.lm_inference import (
     OpenRouterModel,
     vLLMModel,
     HuggingFaceModel,
-    remove_from_huggingface_model_store,
-    clear_huggingface_model_store,
+    remove_from_model_store,
+    clear_model_store,
 )
 from utils.embedding import (
     TextEmbeddingModel,
@@ -24,13 +24,9 @@ from utils.embedding import (
     HuggingFaceTextEmbeddingModel,
     HuggingFaceImageEmbeddingModel,
     HuggingFaceImageTextEmbeddingModel,
+    JinaV4TextEmbeddingModel,
+    JinaV4ImageEmbeddingModel,
     cosine_similarity,
     get_top_k_similars,
-    remove_from_text_embedding_store,
-    remove_from_image_embedding_store,
-    remove_from_image_text_embedding_store,
-    clear_text_embedding_store,
-    clear_image_embedding_store,
-    clear_image_text_embedding_store,
 )
-from tests import paired_bootstrap
+from utils.tests import paired_bootstrap

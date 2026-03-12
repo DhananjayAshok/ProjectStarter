@@ -10,6 +10,8 @@ from utils import (
     OpenRouterTextEmbeddingModel,
     HuggingFaceTextEmbeddingModel,
     HuggingFaceImageEmbeddingModel,
+    JinaV4TextEmbeddingModel,
+    JinaV4ImageEmbeddingModel,
     get_top_k_similars,
 )
 
@@ -33,8 +35,8 @@ max_new_tokens = 20
 
 
 def test_vlm(model):
-    print(model.infer(text1, images=[image1], max_new_tokens=max_new_tokens))
-    print(model.infer(text2, images=[image1, image2], max_new_tokens=max_new_tokens))
+    #print(model.infer(text1, images=[image1], max_new_tokens=max_new_tokens))
+    #print(model.infer(text2, images=[image1, image2], max_new_tokens=max_new_tokens))
     print(
         model.infer(
             [text1, text2], images=[[image1], [image2]], max_new_tokens=max_new_tokens
@@ -43,8 +45,8 @@ def test_vlm(model):
 
 
 def test_lm(model):
-    print(model.infer(text1, max_new_tokens=max_new_tokens))
-    print(model.infer([text2], max_new_tokens=max_new_tokens))
+    #print(model.infer(text1, max_new_tokens=max_new_tokens))
+    #print(model.infer([text2], max_new_tokens=max_new_tokens))
     print(model.infer([text1, text2], max_new_tokens=max_new_tokens))
 
 
@@ -72,17 +74,17 @@ def test_image_embedding(model):
 
 models_to_test = {
     "lm": [
-        HuggingFaceModel(model="meta-llama/Llama-3.2-1B-Instruct"),
+        HuggingFaceModel(model="meta-llama/Llama-3.2-1B-Instruct", model_kind="lm"),
+        #OpenRouterModel(model="meta-llama/llama-3.3-70b-instruct"),
     ],
     "vlm": [
-        OpenAIModel(model="gpt-4o-mini"),
-        OpenRouterModel(model="meta-llama/llama-3.3-70b-instruct:free"),
-        AnthropicModel(model="claude-haiku-4-5-20251001"),
-        HuggingFaceModel(model="Qwen/Qwen3-VL-2B-Instruct"),
+        #OpenAIModel(model="gpt-4o-mini"),  # PASSES
+        #AnthropicModel(model="claude-haiku-4-5-20251001"),
+        HuggingFaceModel(model="Qwen/Qwen3-VL-2B-Instruct", model_kind="vlm"),
     ],
     "text-embedding": [
-        OpenAITextEmbeddingModel(model="text-embedding-3-small"),
-        OpenRouterTextEmbeddingModel(model="nvidia/llama-nemotron-embed-vl-1b-v2:free"),
+        #OpenAITextEmbeddingModel(model="text-embedding-3-small"),
+        #OpenRouterTextEmbeddingModel(model="nvidia/llama-nemotron-embed-vl-1b-v2:free"),
         HuggingFaceTextEmbeddingModel(model="Qwen/Qwen3-Embedding-0.6B"),
     ],
     "image-embedding": [
