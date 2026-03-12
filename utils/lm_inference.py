@@ -1,3 +1,5 @@
+from pyexpat import model
+
 from openai import OpenAI
 from time import sleep, perf_counter
 from typing import Optional, Any, Union
@@ -10,7 +12,13 @@ import base64
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from transformers import AutoModel, AutoTokenizer, AutoProcessor, AutoModelForCausalLM, AutoModelForImageTextToText
+from transformers import (
+    AutoModel,
+    AutoTokenizer,
+    AutoProcessor,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+)
 import torch
 import gc
 
@@ -21,8 +29,14 @@ class InferenceModel(ABC):
     """
     Abstract base class for all LM inference that support inference
     """
+
     @abstractmethod
-    def do_infer(self, texts: list[str], max_new_tokens: int, images: list[list[Image.Image]] = None) -> list[str]:
+    def do_infer(
+        self,
+        texts: list[str],
+        max_new_tokens: int,
+        images: list[list[Image.Image]] = None,
+    ) -> list[str]:
         """
         Run inference on a batch of text prompts with associated images. Assumes validated inputs
 
@@ -37,7 +51,12 @@ class InferenceModel(ABC):
         """
         pass
 
-    def infer(self, texts: Union[str, list[str]], max_new_tokens: int, images: Union[list[Image.Image], list[list[Image.Image]]] = None) -> Union[str, list[str]]:
+    def infer(
+        self,
+        texts: Union[str, list[str]],
+        max_new_tokens: int,
+        images: Union[list[Image.Image], list[list[Image.Image]]] = None,
+    ) -> Union[str, list[str]]:
         """
         Run inference on a batch of text prompts with associated images.
 
@@ -52,24 +71,28 @@ class InferenceModel(ABC):
         :type images: list[Image.Image] or list[list[Image.Image]] or None
         :return: A single output string if ``texts`` was a string, otherwise a list of output strings.
         :rtype: str or list[str]
-        """        
-        passed_in_str = isinstance(texts, str)   
+        """
+        passed_in_str = isinstance(texts, str)
         if passed_in_str:
             if texts.strip() == "":
                 log_error(f"texts cannot be empty")
             texts = [texts]
         else:
             if not isinstance(texts, list):
-                log_error(f"texts must be a string or list of strings. Got {type(texts)}")
+                log_error(
+                    f"texts must be a string or list of strings. Got {type(texts)}"
+                )
             if len(texts) == 0:
                 log_error(f"texts cannot be empty.")
             for item in texts:
                 if not isinstance(item, str):
                     log_error(f"Got {type(item)}:{item} instead of str as text")
-         
+
         if images is not None:
             if not isinstance(images, list):
-                log_error(f"images must be a list of PIL images or list of lists of PIL Images. Got {type(images)}")
+                log_error(
+                    f"images must be a list of PIL images or list of lists of PIL Images. Got {type(images)}"
+                )
             else:
                 if len(images) == 0:
                     log_error(f"images cannot be empty")
@@ -77,21 +100,28 @@ class InferenceModel(ABC):
                     for item in images:
                         if not isinstance(item, Image.Image):
                             if isinstance(item, list):
-                                log_error(f"Passed in a single string for texts but  list of lists for images. This is confusing.")
-                            log_error(f"image list contains non images: {type(item)}: {item}")
+                                log_error(
+                                    f"Passed in a single string for texts but  list of lists for images. This is confusing."
+                                )
+                            log_error(
+                                f"image list contains non images: {type(item)}: {item}"
+                            )
                 else:
                     for list_item in images:
                         if not isinstance(list_item, list):
-                            log_error(f"images must be a list of list of PIL Images, got a {type(list_item)}:{list_item}")
+                            log_error(
+                                f"images must be a list of list of PIL Images, got a {type(list_item)}:{list_item}"
+                            )
                         for item in list_item:
                             if not isinstance(item, Image.Image):
-                                log_error(f"image list contains non images: {type(item)}: {item}")                                
+                                log_error(
+                                    f"image list contains non images: {type(item)}: {item}"
+                                )
         results = self.do_infer(texts, max_new_tokens, images=images)
         if passed_in_str:
             return results[0]
         else:
             return results
-
 
 
 class APIModel(InferenceModel, ABC):
@@ -103,7 +133,14 @@ class APIModel(InferenceModel, ABC):
     and ``get_output_texts``.
     """
 
-    def __init__(self, model: str, base_url: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize the base API model with rate limiting and parameter loading.
 
@@ -127,8 +164,10 @@ class APIModel(InferenceModel, ABC):
         self.seconds_to_wait = 60 / self.max_queries_per_minute
         # error out if max_queries_per_minute is less than limit
         if self.max_queries_per_minute < MIN_QUERIES_PER_MINUTE:
-            log_error(f"max_queries_per_minute must be at least {MIN_QUERIES_PER_MINUTE}, but got {self.max_queries_per_minute}.", parameters=self.parameters)
-
+            log_error(
+                f"max_queries_per_minute must be at least {MIN_QUERIES_PER_MINUTE}, but got {self.max_queries_per_minute}.",
+                parameters=self.parameters,
+            )
 
     def get_encoded_images(self, images: list[Image.Image]) -> list[str]:
         """Encodes images to base64 strings for OpenAI API input.
@@ -149,10 +188,9 @@ class APIModel(InferenceModel, ABC):
                 )
         return encoded_images
 
-
     def clear_encoded_image_cache(self) -> str:
         """
-        VLM based API models save to a cache for image processing. Clears this cache. 
+        VLM based API models save to a cache for image processing. Clears this cache.
 
         :returns: The path to the cache directory for encoded images.
         :rtype: str
@@ -168,9 +206,7 @@ class APIModel(InferenceModel, ABC):
 
         Updates ``last_query_time`` after waiting.
         """
-        time_to_wait = self.seconds_to_wait - (
-            perf_counter() - self.last_query_time
-        )
+        time_to_wait = self.seconds_to_wait - (perf_counter() - self.last_query_time)
         if time_to_wait > 0:
             sleep(time_to_wait)
         self.last_query_time = perf_counter()
@@ -242,7 +278,12 @@ class APIModel(InferenceModel, ABC):
         output_text = self.get_output_texts(response)
         return self.get_output_final(output_text)
 
-    def do_infer(self, texts: list[str], max_new_tokens: int, images: list[list[Image.Image]] = None) -> list[str]:
+    def do_infer(
+        self,
+        texts: list[str],
+        max_new_tokens: int,
+        images: list[list[Image.Image]] = None,
+    ) -> list[str]:
         """
         Encodes all images to base64, constructs API message dicts, enforces
         the rate limit, queries the client, and returns post-processed outputs.
@@ -277,15 +318,17 @@ class APIModel(InferenceModel, ABC):
 
         self.wait()
         responses = []
-        for input_message in inputs: # there is no pricing advantage for batch_size > 1, so just do them sequentially to allow the caller of this function to pass lists of any size. 
+        for (
+            input_message
+        ) in (
+            inputs
+        ):  # there is no pricing advantage for batch_size > 1, so just do them sequentially to allow the caller of this function to pass lists of any size.
             response = self.query_client([input_message], max_new_tokens)
             responses.append(response)
         outputs = []
         for response in responses:
             outputs.append(self.get_output(response))
         return outputs
-
-
 
 
 class OpenAIAPIModel(APIModel):
@@ -296,7 +339,14 @@ class OpenAIAPIModel(APIModel):
     Suitable as a base for any service that exposes an OpenAI-compatible API.
     """
 
-    def __init__(self, model: str, base_url: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize the OpenAI-compatible API model.
 
@@ -311,7 +361,13 @@ class OpenAIAPIModel(APIModel):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
-        super().__init__(model=model, base_url=base_url, api_key=api_key, max_queries_per_minute=max_queries_per_minute, parameters=parameters)
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
     def get_image_input_dict(self, image: str) -> dict:
@@ -323,8 +379,7 @@ class OpenAIAPIModel(APIModel):
         :return: A content dict with ``type`` and ``image_url`` fields.
         :rtype: dict
         """
-        return {"type": "input_image",
-                "image_url": f"data:image/jpeg;base64,{image}"}
+        return {"type": "input_image", "image_url": f"data:image/jpeg;base64,{image}"}
 
     def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
         """
@@ -363,7 +418,13 @@ class OpenAIModel(OpenAIAPIModel):
     Connects directly to OpenAI without a custom base URL.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize an OpenAI model using the default OpenAI endpoint.
 
@@ -376,7 +437,13 @@ class OpenAIModel(OpenAIAPIModel):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
-        super().__init__(model=model, base_url=None, api_key=api_key, max_queries_per_minute=max_queries_per_minute, parameters=parameters)
+        super().__init__(
+            model=model,
+            base_url=None,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
 
@@ -388,7 +455,13 @@ class AnthropicModel(APIModel):
     ``query_client``, and ``get_output_texts`` using the Anthropic SDK before use.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize the Anthropic model stub.
 
@@ -401,8 +474,14 @@ class AnthropicModel(APIModel):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
-        super().__init__(model=model, base_url=None, api_key=api_key, max_queries_per_minute=max_queries_per_minute, parameters=parameters)
-        self.client = None # TODO
+        super().__init__(
+            model=model,
+            base_url=None,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
+        self.client = None  # TODO
 
     def get_image_input_dict(self, image: str) -> dict:
         """
@@ -413,12 +492,14 @@ class AnthropicModel(APIModel):
         :return: A content dict with ``type`` and ``source`` fields.
         :rtype: dict
         """
-        return {"type": "image", "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": image,
-                },
-            }
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": image,
+            },
+        }
 
     def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
         """
@@ -442,8 +523,6 @@ class AnthropicModel(APIModel):
         breakpoint()
         raise NotImplementedError
 
-    
-
 
 class vLLMModel(OpenAIAPIModel):
     """
@@ -455,7 +534,13 @@ class vLLMModel(OpenAIAPIModel):
         The default base URL is not yet configured. Set ``base_url`` before use.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize a vLLM-served model.
 
@@ -470,7 +555,13 @@ class vLLMModel(OpenAIAPIModel):
         """
         parameters = load_parameters(parameters)
         base_url = parameters["vLLM_base_url"]
-        super().__init__(model=model, base_url=base_url, api_key=api_key, max_queries_per_minute=max_queries_per_minute, parameters=parameters)
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
         self.client = OpenAI(base_url=base_url, api_key=self.api_key)
 
 
@@ -482,7 +573,13 @@ class OpenRouterModel(OpenAIAPIModel):
     via a single OpenAI-compatible endpoint at ``https://openrouter.ai/api/v1``.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, max_queries_per_minute: int = 60, parameters: dict[str, Any] = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        max_queries_per_minute: int = 60,
+        parameters: dict[str, Any] = None,
+    ) -> None:
         """
         Initialize an OpenRouter model.
 
@@ -495,24 +592,106 @@ class OpenRouterModel(OpenAIAPIModel):
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
-        super().__init__(model=model, base_url="https://openrouter.ai/api/v1", api_key=api_key, max_queries_per_minute=max_queries_per_minute, parameters=parameters)
+        super().__init__(
+            model=model,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            max_queries_per_minute=max_queries_per_minute,
+            parameters=parameters,
+        )
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
+
+SPECIAL_MODEL_CLASSES = ["default-lm", "default-vlm"]
+
+
+class HuggingFaceModel:
+    def __init__(
+        self,
+        model_name: str,
+        model_class: str = None,
+        parameters: dict[str, Any] = None,
+        **model_kwargs,
+    ) -> None:
+        self.model_name = model_name
+        if model_class is None:
+            model_class = infer_model_class(model_name, error_out=True)
+        self.model_class = model_class
+        self.model_kwargs = model_kwargs
+        self.parameters = parameters
+        self.is_defunct = False
+        if model_name in HUGGINGFACE_MODEL_MAPPING:
+            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model_name].model_kwargs
+            if used_kwargs != model_kwargs:
+                log_warn(
+                    f"Model {model_name} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
+                )
+                remove_from_huggingface_model_store(model_name)
+                load_model_into_store(model_name, model_class, model_kwargs)
+        else:
+            load_model_into_store(model_name, model_class, model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model_name].users.append(self)
+
+    def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
+        content = [{"type": "text", "text": text}]
+        if images is not None:
+            for img in images:
+                content.append(
+                    {
+                        "type": "image",
+                        "image": img,
+                    }
+                )
+        return [{"role": "user", "content": content}]
+
+    def do_infer(
+        self,
+        texts: list[str],
+        max_new_tokens: int,
+        images: list[list[Image.Image]] = None,
+    ) -> list[str]:
+        if self.is_defunct:
+            log_error(
+                f"Cannot run inference on defunct model.",
+                parameters=self.parameters,
+            )
+        messages = [
+            self.get_single_message_list(text, img_list)
+            for text, img_list in zip(texts, images)
+        ]
+        processor = HUGGINGFACE_MODEL_MAPPING[self.model_name].processor
+        model = HUGGINGFACE_MODEL_MAPPING[self.model_name].model
+        inputs = processor.apply_chat_template(
+            messages, tokenize=True, return_dict=True, return_tensors="pt"
+        )
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            top_p=None,
+            temperature=None,
+            top_k=None,
+            repetition_penalty=1.2,
+            stop_strings=["[STOP]"],
+            tokenizer=processor.tokenizer,
+        )
+        output_texts = processor.batch_decode(outputs, skip_special_tokens=True)
+        return output_texts
 
 
 @dataclass
 class HuggingFaceModelStore:
     model: AutoModel
     processor: AutoProcessor
-    model_kwargs: dict[str, Any] # the kwargs the model was initialised with
-    users: list[HuggingFaceModel] # all HuggingFaceModel instances currently using this model.
+    model_kwargs: dict[str, Any]  # the kwargs the model was initialised with
+    users: list[
+        HuggingFaceModel
+    ]  # all HuggingFaceModel instances currently using this model.
 
 
 # Stores all HuggingFace models loaded into GPU. Allows different instantiations
 # of HuggingFaceModel to reuse a loaded model without reloading it every time.
-HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {
-
-}
+HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
 
 
 def set_users_defunct(model_name: str) -> None:
@@ -529,7 +708,10 @@ def set_users_defunct(model_name: str) -> None:
         for user in HUGGINGFACE_MODEL_MAPPING[model_name].users:
             user.is_defunct = True
     else:
-        log_warn(f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct.")
+        log_warn(
+            f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
+        )
+
 
 def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
     """
@@ -546,7 +728,9 @@ def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
     """
     if model_name in HUGGINGFACE_MODEL_MAPPING:
         if verbose:
-            log_info(f"Removing {model_name} from HuggingFace model store and clearing from GPU.")
+            log_info(
+                f"Removing {model_name} from HuggingFace model store and clearing from GPU."
+            )
         set_users_defunct(model_name)
         store = HUGGINGFACE_MODEL_MAPPING.pop(model_name)
         for param in store.model.parameters():
@@ -556,7 +740,10 @@ def remove_from_huggingface_model_store(model_name: str, verbose=False) -> None:
         torch.cuda.empty_cache()
     else:
         if verbose:
-            log_warn(f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove.")
+            log_warn(
+                f"Model {model_name} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
+            )
+
 
 def clear_huggingface_model_store() -> None:
     """
@@ -566,57 +753,46 @@ def clear_huggingface_model_store() -> None:
         remove_from_huggingface_model_store(model_name)
 
 
-
-SPECIAL_MODEL_CLASSES = ["qwen3-vl"]
-
 def load_special_model(model_name, model_class, model_kwargs):
-    pass
+    raise NotImplementedError
 
 
 def load_model_into_store(model_name, model_class, model_kwargs) -> None:
     remove_from_huggingface_model_store(model_name, verbose=False)
-    if model_class is None:
-        pass # generic loading
+    if model_class == "default-lm":
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, device_map="auto", **model_kwargs
+        )
+        processor = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
+            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+        )
+    elif model_class == "default-vlm":
+        model = AutoModelForImageTextToText.from_pretrained(
+            model_name, device_map="auto", **model_kwargs
+        )
+        processor = AutoProcessor.from_pretrained(model_name)
+        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
+            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+        )
     elif model_class in SPECIAL_MODEL_CLASSES:
-        load_special_model(model_name, model_class, model_kwargs)
+        model, processor = load_special_model(model_name, model_class, model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
+            model=model, processor=processor, model_kwargs=model_kwargs, users=[]
+        )
     else:
-        log_error(f"Model class {model_class} not recognised. Cannot load model {model_name} into store.")
+        log_error(
+            f"Model class {model_class} not recognised. Cannot load model {model_name} into store."
+        )
 
 
-def infer_model_class(model_name: str) -> Optional[str]:
+def infer_model_class(model_name: str, error_out: bool = False) -> Optional[str]:
     special_inclusions = []
     for special_class in SPECIAL_MODEL_CLASSES:
         if special_class.lower() in model_name.lower():
             special_inclusions.append(special_class)
     if len(special_inclusions) == 1:
         return special_inclusions[0]
+    if error_out:
+        log_error(f"Could not infer model class for {model_name}.")
     return None
-
-
-
-
-class HuggingFaceModel:
-    def __init__(self, model_name: str, model_class: str = None, parameters: dict[str, Any] = None, **model_kwargs) -> None:
-        self.model_name = model_name
-        if model_class is None:
-            model_class = infer_model_class(model_name)
-        self.model_class = model_class
-        self.model_kwargs = model_kwargs
-        self.parameters = parameters
-        self.is_defunct = False
-        if model_name in HUGGINGFACE_MODEL_MAPPING:
-            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model_name].model_kwargs
-            if used_kwargs != model_kwargs:
-                log_warn(f"Model {model_name} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct.")
-                remove_from_huggingface_model_store(model_name)
-                load_model_into_store(model_name, model_class, model_kwargs)                
-        else:
-            load_model_into_store(model_name, model_class, model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model_name].users.append(self)
-
-
-
-
-    def do_infer(self, texts: list[str], max_new_tokens: int, images: list[list[Image.Image]] = None) -> list[str]:
-        pass
-
