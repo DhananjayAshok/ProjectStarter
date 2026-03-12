@@ -6,7 +6,6 @@ from utils.parameter_handling import load_parameters
 from utils.log_handling import log_info, log_warn, log_error
 import shutil
 from PIL import Image
-import numpy as np
 import base64
 import os
 from abc import ABC, abstractmethod
@@ -343,6 +342,7 @@ class OpenAIAPIModel(APIModel):
     Initializes an ``openai.OpenAI`` client pointed at the given base URL.
     Suitable as a base for any service that exposes an OpenAI-compatible API.
     """
+
     def __init__(
         self,
         model: str,
@@ -383,7 +383,10 @@ class OpenAIAPIModel(APIModel):
         :return: A content dict with ``type`` and ``image_url`` fields.
         :rtype: dict
         """
-        return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}}
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image}"},
+        }
 
     def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
         """
@@ -621,20 +624,23 @@ VLM_MODELS = ["vlm"]
 
 for model in VLM_MODELS:
     if model not in SPECIAL_MODEL_KINDS:
-        log_error(f"Model {model} is in VLM_MODELS but not in SPECIAL_MODEL_KINDS. Please add it to SPECIAL_MODEL_KINDS.")
+        log_error(
+            f"Model {model} is in VLM_MODELS but not in SPECIAL_MODEL_KINDS. Please add it to SPECIAL_MODEL_KINDS."
+        )
 
 
 def get_inputs(model_kind, processor, messages):
     if model_kind in ["lm", "vlm"]:
         inputs = processor.apply_chat_template(
-                messages, add_generation_prompt=True,
-                tokenize=True, return_dict=True, return_tensors="pt"
-            )
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
         return inputs
     else:
         raise NotImplementedError
-    
-    
 
 
 class HuggingFaceModel(InferenceModel):
@@ -679,7 +685,7 @@ class HuggingFaceModel(InferenceModel):
     def do_infer(
         self,
         texts: list[str],
-        images: list[list[Image.Image]],        
+        images: list[list[Image.Image]],
         max_new_tokens: int,
     ) -> list[str]:
         if self.is_defunct:
@@ -688,7 +694,9 @@ class HuggingFaceModel(InferenceModel):
                 parameters=self.parameters,
             )
         if len(images[0]) != 0 and self.model_kind not in VLM_MODELS:
-            log_error(f"Model {self.model} of kind {self.model_kind} cannot handle image inputs.")
+            log_error(
+                f"Model {self.model} of kind {self.model_kind} cannot handle image inputs."
+            )
         messages = [
             self.get_single_message_list(text, img_list)
             for text, img_list in zip(texts, images)
@@ -802,7 +810,9 @@ def load_special_model(model, model_kind, model_kwargs):
 
 def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
     remove_from_huggingface_model_store(model_name, verbose=False)
-    log_info(f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}")
+    log_info(
+        f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}"
+    )
     if model_kind == "lm":
         model = AutoModelForCausalLM.from_pretrained(
             model_name, device_map="auto", **model_kwargs
@@ -838,5 +848,7 @@ def infer_model_kind(model: str, error_out: bool = False) -> Optional[str]:
     if len(special_inclusions) == 1:
         return special_inclusions[0]
     if error_out:
-        log_error(f"Could not infer model class for {model}. Specify `model_kind` as one of: {SPECIAL_MODEL_KINDS}")
+        log_error(
+            f"Could not infer model class for {model}. Specify `model_kind` as one of: {SPECIAL_MODEL_KINDS}"
+        )
     return None

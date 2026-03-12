@@ -1,9 +1,12 @@
-# This file contains all the fundamental utilities that do not rely on any other file. 
+# This file contains all the fundamental utilities that do not rely on any other file.
 import os
 import logging
 from typing import Any
 
-def get_logger(level: int = logging.INFO, filename: str = None, add_console: bool = True) -> logging.Logger:
+
+def get_logger(
+    level: int = logging.INFO, filename: str = None, add_console: bool = True
+) -> logging.Logger:
     """
     Get a logger that can be used to log messages to the console and/or a file.
 
@@ -35,13 +38,14 @@ def get_logger(level: int = logging.INFO, filename: str = None, add_console: boo
         logger.propagate = False
     return logger
 
+
 def meta_dict_to_str(
     meta_dict: dict[str, Any],
     *,
     print_mode: bool = False,
     n_indents: int = 1,
     skip_write_timestamp: bool = True,
-    ) -> str:
+) -> str:
     """
     Convert a dictionary to a string representation.
 
@@ -65,7 +69,7 @@ def meta_dict_to_str(
     meta_str = ""
     for key in keys:
         if print_mode:
-            indent = '\t' * n_indents
+            indent = "\t" * n_indents
             meta_str += f"{indent}{key}: {meta_dict[key]}\n"
         else:
             if skip_write_timestamp and key == "write_timestamp":
@@ -74,7 +78,9 @@ def meta_dict_to_str(
     return meta_str
 
 
-def logger_print_dict(logger: logging.Logger, meta_dict: dict[str, Any], n_indents: int = 1) -> None:
+def logger_print_dict(
+    logger: logging.Logger, meta_dict: dict[str, Any], n_indents: int = 1
+) -> None:
     """
     Log a dictionary in a human-readable indented format.
 
@@ -85,7 +91,9 @@ def logger_print_dict(logger: logging.Logger, meta_dict: dict[str, Any], n_inden
     :param n_indents: Number of tab indents to prepend each line.
     :type n_indents: int
     """
-    meta_dict_str = meta_dict_to_str(meta_dict, print_mode=True, n_indents=n_indents, skip_write_timestamp=False)
+    meta_dict_str = meta_dict_to_str(
+        meta_dict, print_mode=True, n_indents=n_indents, skip_write_timestamp=False
+    )
     logger.info(meta_dict_str)
 
 

@@ -19,7 +19,10 @@ class Plotter:
     3. Use test_sizes to test different sizes for the plot and find the best one. This will show the plot and ask if you want to keep trying different sizes.
     4. Do not use plt.show(), instead use plotter.show()
     """
-    COLOURS = [] # Add your desired colours here, maybe even change this to a dict if you want
+
+    COLOURS = (
+        []
+    )  # Add your desired colours here, maybe even change this to a dict if you want
 
     def __init__(self, parameters: Optional[dict[str, Any]] = None) -> None:
         """
