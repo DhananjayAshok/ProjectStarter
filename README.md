@@ -57,6 +57,7 @@ All `.yaml` files in [`configs/`](configs/) are automatically merged into the `p
 | `add_meta_details` | Returns a copy of a meta dict with additional fields merged in. | `extended = add_meta_details(args, {"epoch": 5})` |
 | `sync_data.py` | Syncs the local `sync_dir` with a HuggingFace Dataset repo. Use for sharing large files (models, datasets) across machines. | `python sync_data.py pull` / `push` / `init` |
 | `utils/lm_inference.py` | LM and VLM inference via OpenAI-compatible APIs (`OpenAIModel`, `vLLMModel`, `OpenRouterModel`), Anthropic (`AnthropicModel`), and local HuggingFace models (`HuggingFaceModel`). Supports text and image inputs. | `model = OpenAIModel(model="gpt-4o"); outputs = model.infer(texts, max_new_tokens=256)` |
+| `paired_bootstrap` | Statistical significance test comparing two systems via paired bootstrap resampling. Returns the achieved p-value. Optionally logs win ratios and 95% confidence intervals. | `p = paired_bootstrap(sys1_scores, sys2_scores, verbose=True, parameters=parameters)` |
 | `llm-utils` (submodule) | Efficient, scalable, offline, batched LLM/VLM inference via HuggingFace Transformers and vLLM. Also supports pretraining, SFT, DPO, and unlearning. Entry point: [`llm-utils/infer.py`](llm-utils/infer.py). Called via [`scripts/llm-utils.sh`](scripts/llm-utils.sh). | `bash scripts/llm-utils.sh --input data.csv --model_name <name> hf --batch_size 8` |
 
 ---
