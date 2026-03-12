@@ -27,7 +27,7 @@ uv add click huggingface_hub seaborn pandas tqdm numpy openai anthropic Pillow t
 | Package | Features provided | How to remove |
 |---|---|---|
 | `click` | CLI commands, `main.py` entry points | Remove all `@click.command` files and `main.py` |
-| `huggingface_hub` | HuggingFace dataset/model sync | Remove [`sync_data.py`](../sync_data.py) |
+| `huggingface_hub` | HuggingFace dataset sync | Remove [`sync_data.py`](../sync_data.py) |
 | `seaborn`, `pandas` | Plotting utilities | Remove [`utils/plot_handling.py`](../utils/plot_handling.py) |
 | `openai` | `OpenAIModel`, `vLLMModel`, `OpenRouterModel` | Remove those classes from [`utils/lm_inference.py`](../utils/lm_inference.py) |
 | `anthropic` | `AnthropicModel` | Remove `AnthropicModel` from [`utils/lm_inference.py`](../utils/lm_inference.py) |
