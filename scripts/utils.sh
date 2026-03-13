@@ -25,12 +25,56 @@ function args_to_flags() {
 }
 
 
-function populate_common_optional_training_args() {
+# args_to_flags_subset <assoc_array_name> "${KEY_LIST[@]}"
+#
+# Like args_to_flags, but only emits flags for the specified keys.
+# Keys not present in the array are silently skipped.
+# Use this when calling a subscript that doesn't accept all of the caller's ARGS.
+#
+# Usage:
+#   subset=$(args_to_flags_subset ARGS "${COMMON_TRAINING_ARGS_KEYS[@]}")
+#   bash scripts/a.sh $subset
+function args_to_flags_subset() {
     local -n _dict="$1"
-    _dict["num_epochs"]="10"
+    shift
+    local result=""
+    for key in "$@"; do
+        if [[ -v _dict["$key"] ]]; then
+            local val="${_dict[$key]}"
+            if [[ -z "$val" ]]; then val="none"; fi
+            result+="--${key} ${val} "
+        fi
+    done
+    echo "${result% }"
 }
 
-function populate_common_required_training_args() {
-    local -n _arr="$1"
-    _arr+=("dataset" "model")
+function populate_dict(){
+    local -n _source_dict="$1"
+    local -n _target_dict="$2"
+    for key in "${!_source_dict[@]}"; do
+        _target_dict["$key"]="${_source_dict[$key]}"
+    done
 }
+
+function populate_array(){
+    local -n _source_arr="$1"
+    local -n _target_arr="$2"
+    _target_arr+=("${_source_arr[@]}")
+}
+
+
+############################################ Example Usage Below ###################################
+# Delete this and replace with your own stuff for a new project
+
+declare -A COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS=(["num_epochs"]="10")
+function populate_common_optional_training_args() {
+    populate_dict COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS "$1"
+}
+
+COMMON_REQUIRED_TRAINING_ARGS=("dataset" "model")
+function populate_common_required_training_args() {
+    populate_array COMMON_REQUIRED_TRAINING_ARGS "$1"
+}
+
+# Combined key list for use with args_to_flags_subset when calling a subscript
+COMMON_TRAINING_ARGS_KEYS=("${COMMON_REQUIRED_TRAINING_ARGS[@]}" "${!COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS[@]}")

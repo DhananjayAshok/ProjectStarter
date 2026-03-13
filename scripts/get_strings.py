@@ -92,6 +92,8 @@ def parse():
             raise ValueError(f"Duplicate argument key: {args[i][2:]}")
         if args[i+1].startswith("--"):
             raise ValueError(f"consecutive --s: {args}")
+        if args[i+1].strip().lower() == "none":
+            continue
         arg_dict[args[i].strip("--").lower()] = args[i+1]
     return string_name, arg_dict
 

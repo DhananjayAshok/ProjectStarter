@@ -7,7 +7,6 @@ source scripts/utils.sh || { echo "Could not source utils"; exit 1; }
 declare -A ARGS
 ARGS["batch_size"]="32"
 ARGS["lr"]="0.001"
-# there are two ways of handling none values:
 ARGS["scheduler"]="none" 
 ARGS["train_only"]="none"
 
@@ -31,6 +30,10 @@ done
 for opt in "${!ARGS[@]}"; do
     # Only list if NOT in required (to avoid double listing)
     if [[ ! " ${REQUIRED_ARGS[*]} " =~ " ${opt} " ]]; then
+        if [[ -z "${ARGS[$opt]}" ]]; then
+            echo "DEFAULT VALUE OF KEY \"$opt\" CANNOT BE BLANK"
+            exit 1
+        fi
         USAGE_STR+=" [--$opt <value> (default: ${ARGS[$opt]})]"
     fi
 done
@@ -70,7 +73,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validation
-echo validating: "${REQUIRED_ARGS[@]}"
 for req in "${REQUIRED_ARGS[@]}"; do
     echo $req : "${ARGS[$req]}"
     if [[ -z "${ARGS[$req]}" ]]; then
@@ -102,3 +104,9 @@ arg_string=$(args_to_flags ARGS)
 echo $arg_string
 exp_name=$(python scripts/get_strings.py exp_name $arg_string)
 echo "Do something with exp: $exp_name"
+
+# When calling a subscript that doesn't accept all of this script's ARGS,
+# use args_to_flags_subset with the companion key arrays from utils.sh.
+# This avoids the subscript erroring on unknown flags.
+subset=$(args_to_flags_subset ARGS "${COMMON_TRAINING_ARGS_KEYS[@]}")
+# bash scripts/other_script.sh $subset

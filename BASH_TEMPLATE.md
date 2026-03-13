@@ -42,6 +42,10 @@ done
 for opt in "${!ARGS[@]}"; do
     # Only list if NOT in required (to avoid double listing)
     if [[ ! " ${REQUIRED_ARGS[*]} " =~ " ${opt} " ]]; then
+        if [[ -z "${ARGS[$opt]}" ]]; then
+            echo "DEFAULT VALUE OF KEY \"$opt\" CANNOT BE BLANK"
+            exit 1
+        fi
         USAGE_STR+=" [--$opt <value> (default: ${ARGS[$opt]})]"
     fi
 done
@@ -99,40 +103,79 @@ done
 # Put your script code below:
 ```
 
-When multiple scripts share a common set of optional defaults or required arguments, define `populate_*` functions in `scripts/utils.sh` using bash namerefs (`local -n`). This lets a function modify the caller's array in place without any return-value machinery.
+### Handling optional args that may be absent: use `"none"`, not `""`
+
+Optional ARGS must always have a non-empty default (the blank-check above enforces this). For args that are genuinely optional at the Python level, use `"none"` as the default:
 
 ```bash
-# In scripts/utils.sh
-
-function populate_common_optional_training_args() {
-    local -n _dict="$1"
-    _dict["num_epochs"]="10"
-    # add more shared optional args here
-}
-
-function populate_common_required_training_args() {
-    local -n _arr="$1"
-    _arr+=("dataset" "model")
-    # add more shared required args here
-}
+ARGS["scheduler"]="none"
 ```
 
-Call these **after** declaring your script-specific `ARGS` and `REQUIRED_ARGS`, but **before** computing `ALLOWED_FLAGS`:
+`args_to_flags` will emit `--scheduler none`, so any Python script receiving it must convert the string `"none"` to `None`. If you don't want to touch the Python side, handle it in bash before building `arg_string`:
 
 ```bash
-declare -A ARGS
-ARGS["lr"]="0.001"
-REQUIRED_ARGS=("experiment_id")
+# Do this in the script body below "Put your script code below:", not in the setup section
+if [[ "${ARGS["scheduler"]}" == "none" ]]; then
+    scheduler_arg=""
+else
+    scheduler_arg="--scheduler ${ARGS["scheduler"]}"
+fi
+```
 
-populate_common_optional_training_args ARGS        # pass name, not $ARGS
+Then pass `$scheduler_arg` directly rather than including `scheduler` in `args_to_flags`.
+
+---
+
+When multiple scripts share common args, define `populate_*` functions in `scripts/utils.sh`. Call them after your script-specific `ARGS` and `REQUIRED_ARGS`, but before `ALLOWED_FLAGS`:
+
+```bash
+populate_common_optional_training_args ARGS          # pass name, not $ARGS
 populate_common_required_training_args REQUIRED_ARGS
 
 ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
 ```
 
-Pass the **variable name as a plain string** (no `$`). Using `$ARGS` would expand the array contents instead of passing the name.
+This merges the shared defaults/required keys into your script's arrays in place.
 
-In this way, you don't need to repeat parameters that feature in multiple scripts. 
+### Adding a new shared optional arg
+
+In `scripts/utils.sh`, add a key-value pair to the defaults dict:
+
+```bash
+declare -A COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS=(["num_epochs"]="10" ["new_arg"]="default_val")
+```
+
+That's it. Every script calling `populate_common_optional_training_args` will automatically receive `new_arg`.
+
+### Adding a new shared required arg
+
+In `scripts/utils.sh`, add to the required array:
+
+```bash
+COMMON_REQUIRED_TRAINING_ARGS=("dataset" "model" "new_required_arg")
+```
+
+Every script calling `populate_common_required_training_args` will now require `--new_required_arg` at the command line.
+
+### Adding a new group of shared args
+
+If you have a new set of scripts that share different args from the training group, follow the same pattern in `utils.sh`:
+
+```bash
+declare -A COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS=(["split"]="test")
+function populate_common_optional_eval_args() {
+    populate_dict COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS "$1"
+}
+
+COMMON_REQUIRED_EVAL_ARGS=("checkpoint")
+function populate_common_required_eval_args() {
+    populate_array COMMON_REQUIRED_EVAL_ARGS "$1"
+}
+
+COMMON_EVAL_ARGS_KEYS=("${COMMON_REQUIRED_EVAL_ARGS[@]}" "${!COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS[@]}")
+```
+
+Then call `populate_common_optional_eval_args ARGS` / `populate_common_required_eval_args REQUIRED_ARGS` in your eval scripts, and use `COMMON_EVAL_ARGS_KEYS` with `args_to_flags_subset` when calling eval subscripts.
 
 ---
 
@@ -161,7 +204,28 @@ arg_string=$(args_to_flags ARGS)
 python scripts/get_strings.py exp_name $arg_string
 ```
 
-Note: bash associative arrays have no guaranteed iteration order, so flag order may vary. This is fine for `--key value` style CLI args, and the scripts/get_string.py file handles this well. 
+Note: bash associative arrays have no guaranteed iteration order, so flag order may vary. This is fine for `--key value` style CLI args, and the scripts/get_string.py file handles this well.
+
+---
+
+## `args_to_flags_subset`: Calling a subscript without passing all ARGS
+
+When script B calls script A, passing `args_to_flags ARGS` would include B's script-specific flags, which A would reject as unknown. Use `args_to_flags_subset` to emit only the keys that A expects.
+
+`utils.sh` pre-computes a combined key list from the required args array and the optional defaults dict keys. Pass that single list:
+
+```bash
+subset=$(args_to_flags_subset ARGS "${COMMON_TRAINING_ARGS_KEYS[@]}")
+bash scripts/a.sh $subset
+```
+
+`COMMON_TRAINING_ARGS_KEYS` is defined once in `utils.sh` after both sources exist:
+
+```bash
+COMMON_TRAINING_ARGS_KEYS=("${COMMON_REQUIRED_TRAINING_ARGS[@]}" "${!COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS[@]}")
+```
+
+When adding new shared args, update only the relevant source (`COMMON_REQUIRED_TRAINING_ARGS` or `COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS`) — `COMMON_TRAINING_ARGS_KEYS` picks them up automatically.
 
 ---
 
@@ -203,6 +267,7 @@ STRING_FUNCTIONS = [..., MyExpName]
 - `_get_string` must return a string with **no spaces** if it will be used as a path or experiment name
 - Unexpected arguments passed in are silently ignored — keep required args minimal
 - Optional args should have sensible defaults; prefer controlling defaults via `populate_common_optional_*` in `utils.sh` rather than hardcoding them here
+- `none` values are **automatically skipped** by the parser — a `--key none` flag is never passed to `_get_string`. This means you can safely pass the full `$arg_string` (which may contain `none` values) without those keys showing up as unexpected args or overriding defaults in `OPTIONAL_ARGS`
 
 
 ---
