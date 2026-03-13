@@ -100,9 +100,7 @@ fi
 
 
 # Put your script code below:
-arg_string=$(args_to_flags ARGS)
-echo $arg_string
-exp_name=$(python scripts/get_strings.py exp_name $arg_string)
+exp_name=$(get_string_from_args exp_name ARGS)
 echo "Do something with exp: $exp_name"
 
 # When calling a subscript that doesn't accept all of this script's ARGS,

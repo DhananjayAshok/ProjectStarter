@@ -1,5 +1,6 @@
 source configs/config.env || { echo "configs/config.env not found"; exit 1; }
 source setup/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
+PROJECT_ROOT=$(pwd) # expects to be run from root, always. 
 
 # args_to_flags <assoc_array_name>
 #
@@ -22,6 +23,18 @@ function args_to_flags() {
         result+="--${key} ${val} "
     done
     echo "${result% }"  # trim trailing space
+}
+
+# get_string_from_args <string_kind> <assoc_array_name>
+#
+# Utility function to get a string from get_strings.py by passing an associative array of args.
+# Usage:
+#   string=$(get_string_from_args <string_kind> ARGS)
+function get_string_from_args() {
+    local string_kind="$1"
+    shift
+    local flags=$(args_to_flags "$1")
+    python ${PROJECT_ROOT}/scripts/get_strings.py "$string_kind" $flags
 }
 
 

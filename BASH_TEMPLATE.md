@@ -197,12 +197,13 @@ function args_to_flags() {
 }
 ```
 
-Usage:
+Usage (when you need the raw flag string for other purposes):
 
 ```bash
 arg_string=$(args_to_flags ARGS)
-python scripts/get_strings.py exp_name $arg_string
 ```
+
+For calling `get_strings.py`, prefer `get_string_from_args` which handles this internally.
 
 Note: bash associative arrays have no guaranteed iteration order, so flag order may vary. This is fine for `--key value` style CLI args, and the scripts/get_string.py file handles this well.
 
@@ -233,19 +234,26 @@ When adding new shared args, update only the relevant source (`COMMON_REQUIRED_T
 
 Sometimes bash needs a computed string (e.g. an experiment name) that is easier to build in Python. `scripts/get_strings.py` provides a registry of named `StringFunction` classes callable from bash.
 
-### How it works
+### Usage: `get_string_from_args`
 
-1. Each `StringFunction` subclass declares `NAME`, `REQUIRED_ARGS`, and `OPTIONAL_ARGS`.
-2. The script is called with the function name followed by `--key value` pairs.
-3. It prints exactly one string to stdout (captured by bash) and exits non-zero on error.
+The preferred way to call it is via the `get_string_from_args` helper in `utils.sh`, which handles the `args_to_flags` conversion internally:
 
 ```bash
-exp_name=$(python scripts/get_strings.py exp_name $arg_string)
+exp_name=$(get_string_from_args exp_name ARGS)
 if [[ -z "$exp_name" ]]; then
     echo "Error: failed to build experiment name"
     exit 1
 fi
+model_save_path="$storage_dir/models/$exp_name/"
 ```
+
+Pass the string function name and the ARGS variable name (no `$`). All `none` values in ARGS are automatically skipped by the parser, so you can pass ARGS directly without pre-filtering.
+
+### How it works
+
+1. Each `StringFunction` subclass declares `NAME`, `REQUIRED_ARGS`, and `OPTIONAL_ARGS`.
+2. `get_string_from_args` serializes ARGS to `--key value` flags and calls `scripts/get_strings.py`.
+3. It prints exactly one string to stdout (captured by bash) and exits non-zero on error.
 
 ### Adding a new string function
 

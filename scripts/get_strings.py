@@ -25,6 +25,15 @@ def depathify(string) -> str:
         .replace(".", "_")
     )
 
+def log(message: str) -> None:
+    """
+    Helper function to log a message to stderr. This is useful for debugging and error messages.
+
+    :param message: the message to log
+    :type message: str
+    """
+    print(message, file=sys.stderr)
+
 
 class StringFunction(ABC):
     NAME = None # name of the string function, used to call it from bash.
