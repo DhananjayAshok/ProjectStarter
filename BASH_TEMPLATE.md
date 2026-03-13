@@ -2,22 +2,31 @@
 
 Reference for bash scripting patterns used in this project family.
 
+
+## Shared Bash Infrastructure (`scripts/utils.sh`)
+
+`scripts/utils.sh` handles sourcing `configs/config.env` and the virtualenv so downstream scripts only need one line. It also defines shared helper functions: `populate_common_*` functions for shared args, and `args_to_flags` for serializing ARGS to pass to Python (specifically for [getting strings](#scriptsget_stringspy-python-string-generation-from-bash)).
+
 ---
 
-## Standalone Script Template
+## Shared Parameters via `utils.sh` (nameref pattern)
 
-Every bash script must source `configs/utils.sh` (provides `storage_dir`, `WANDB_PROJECT`, and all other YAML params as shell variables and activate the virtual environment). 
+All operation scripts must declare an ARGS array of required an optional parameters and read in the flags from the input. 
 
 ```bash
 #!/usr/bin/env bash
 
 source scripts/utils.sh || { echo "Could not source utils"; exit 1; }
 
-# Define defaults and required args
+# Define script-specific defaults and required args
 declare -A ARGS
 ARGS["first"]="hello"
 ARGS["second"]="100000"
 REQUIRED_ARGS=("third")
+
+# OPTIONAL: Extend with shared arguments from utils.sh (call BEFORE ALLOWED_FLAGS is computed)
+#populate_common_optional_training_args ARGS
+#populate_common_required_training_args REQUIRED_ARGS
 
 # Handle parsing and input errors below:
 ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
@@ -90,83 +99,115 @@ done
 # Put your script code below:
 ```
 
----
-
-## Shared Bash Infrastructure (`scripts/utils.sh`)
-
-When multiple scripts share logic — most commonly constructing experiment or environment names — define reusable functions in `scripts/utils.sh`. This file handles sourcing so downstream scripts only need one line.
-
----
-
-## Value-Returning Functions in `utils.sh`
-
-Bash functions return values by printing to stdout, which the caller captures with `$(...)`. This means any diagnostic `echo` inside the function **must** be redirected to stderr with `>&2`, otherwise it gets captured as part of the return value.
-
-### Example: experiment name builder
+When multiple scripts share a common set of optional defaults or required arguments, define `populate_*` functions in `scripts/utils.sh` using bash namerefs (`local -n`). This lets a function modify the caller's array in place without any return-value machinery.
 
 ```bash
 # In scripts/utils.sh
 
-function get_exp_name() {
-    declare -A ARGS
-    REQUIRED_ARGS=("algorithm" "timesteps" "gamma" "env")
+function populate_common_optional_training_args() {
+    local -n _dict="$1"
+    _dict["num_epochs"]="10"
+    # add more shared optional args here
+}
 
-    ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}")
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --*)
-                FLAG=${1#--}
-                VALID=false
-                for allowed in "${ALLOWED_FLAGS[@]}"; do
-                    if [[ "$FLAG" == "$allowed" ]]; then VALID=true; break; fi
-                done
-                if [ "$VALID" = false ]; then
-                    echo "Error: Unknown flag --$FLAG" >&2  # >&2 so it is not captured
-                    return 1
-                fi
-                ARGS["$FLAG"]="$2"
-                shift 2
-                ;;
-            *) echo "Unknown argument: $1" >&2; return 1 ;;
-        esac
-    done
-
-    for req in "${REQUIRED_ARGS[@]}"; do
-        if [[ -z "${ARGS[$req]}" ]]; then
-            echo "Error: missing required argument --$req" >&2
-            FAILED=true
-        fi
-    done
-    if [ "$FAILED" = true ]; then return 1; fi
-
-    # Diagnostic messages go to stderr — visible in terminal but not captured by $(...)
-    echo "Building experiment name..." >&2
-
-    # The return value is the only thing printed to stdout
-    echo "${ARGS["algorithm"]}-${ARGS["timesteps"]}-${ARGS["gamma"]}-${ARGS["env"]}"
+function populate_common_required_training_args() {
+    local -n _arr="$1"
+    _arr+=("dataset" "model")
+    # add more shared required args here
 }
 ```
 
-### Calling a value-returning function
+Call these **after** declaring your script-specific `ARGS` and `REQUIRED_ARGS`, but **before** computing `ALLOWED_FLAGS`:
 
 ```bash
-# Capture the return value with $(...)
-exp_name=$(get_exp_name --algorithm sac --timesteps 1000000 --gamma 0.99 --env default)
+declare -A ARGS
+ARGS["lr"]="0.001"
+REQUIRED_ARGS=("experiment_id")
 
-# Always check for failure
+populate_common_optional_training_args ARGS        # pass name, not $ARGS
+populate_common_required_training_args REQUIRED_ARGS
+
+ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
+```
+
+Pass the **variable name as a plain string** (no `$`). Using `$ARGS` would expand the array contents instead of passing the name.
+
+In this way, you don't need to repeat parameters that feature in multiple scripts. 
+
+---
+
+## `args_to_flags`: Converting ARGS to a CLI flag string
+
+`args_to_flags` (defined in `scripts/utils.sh`) serializes a bash associative array into a `--key value` string suitable for passing to a Python script or another bash script. Empty values (`""`) are emitted as `none`.
+
+```bash
+# In scripts/utils.sh
+function args_to_flags() {
+    local -n _dict="$1"
+    local result=""
+    for key in "${!_dict[@]}"; do
+        local val="${_dict[$key]}"
+        if [[ -z "$val" ]]; then val="none"; fi
+        result+="--${key} ${val} "
+    done
+    echo "${result% }"
+}
+```
+
+Usage:
+
+```bash
+arg_string=$(args_to_flags ARGS)
+python scripts/get_strings.py exp_name $arg_string
+```
+
+Note: bash associative arrays have no guaranteed iteration order, so flag order may vary. This is fine for `--key value` style CLI args, and the scripts/get_string.py file handles this well. 
+
+---
+
+## `scripts/get_strings.py`: Python string generation from bash
+
+Sometimes bash needs a computed string (e.g. an experiment name) that is easier to build in Python. `scripts/get_strings.py` provides a registry of named `StringFunction` classes callable from bash.
+
+### How it works
+
+1. Each `StringFunction` subclass declares `NAME`, `REQUIRED_ARGS`, and `OPTIONAL_ARGS`.
+2. The script is called with the function name followed by `--key value` pairs.
+3. It prints exactly one string to stdout (captured by bash) and exits non-zero on error.
+
+```bash
+exp_name=$(python scripts/get_strings.py exp_name $arg_string)
 if [[ -z "$exp_name" ]]; then
     echo "Error: failed to build experiment name"
     exit 1
 fi
-
-echo "Running experiment: $exp_name"
-model_save_path="$storage_dir/models/$exp_name/"
 ```
 
-The `>&2` diagnostic lines print to the terminal as normal. Only the final `echo` (the actual name string) is captured into `$exp_name`.
+### Adding a new string function
 
-### Key rules for value-returning functions
-- Use `return 1` (not `exit 1`) on error — `exit` would kill the calling shell
-- All `echo` statements except the return value must use `>&2`
-- The caller must check that the result is non-empty before using it
+In `scripts/get_strings.py`:
+
+```python
+class MyExpName(StringFunction):
+    NAME = "my_exp_name"
+    REQUIRED_ARGS = ["dataset", "model"]
+    OPTIONAL_ARGS = {"version": "v1"}
+
+    def _get_string(self, **kwargs) -> str:
+        return f"{kwargs['dataset']}_{kwargs['model']}_{kwargs['version']}"
+
+STRING_FUNCTIONS = [..., MyExpName]
+```
+
+### Key rules
+- `_get_string` must return a string with **no spaces** if it will be used as a path or experiment name
+- Unexpected arguments passed in are silently ignored — keep required args minimal
+- Optional args should have sensible defaults; prefer controlling defaults via `populate_common_optional_*` in `utils.sh` rather than hardcoding them here
+
+
+---
+
+## Example Script
+
+See the working example [below](scripts/example.sh) to understand how these pieces come together. 
+
