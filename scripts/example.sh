@@ -9,9 +9,8 @@ ARGS["batch_size"]="32"
 ARGS["lr"]="0.001"
 # there are two ways of handling none values:
 ARGS["scheduler"]="none" 
-ARGS["train_only"]=""
-# keep in mind, you must only use "" if you are not going to be using the pattern --flag value. 
-# keep in mind also, if you use "none", then any python scripts taking this flag in will need to know to process it to a None. 
+ARGS["train_only"]="none"
+
 REQUIRED_ARGS=("third")
 
 # extend it to include the shared arguments (if any) (place the function in utils)
@@ -87,6 +86,16 @@ echo "Script: $0 Active variables:"
 for key in "${!ARGS[@]}"; do
     echo "  -$key = ${ARGS[$key]}"
 done
+
+# keep in mind also, if you use "none" as a default argument, then any python scripts taking this flag in will need to know to process it to a None. If thats not the case, then handle it explicitly in bash with :
+
+# place this in the section below, not here
+if [[ "${ARGS["scheduler"]}" == "none" ]]; then
+    scheduler_arg=""
+else
+    scheduler_arg="--scheduler ${ARGS["scheduler"]}"
+fi
+
 
 # Put your script code below:
 arg_string=$(args_to_flags ARGS)
