@@ -58,7 +58,7 @@ This exports all YAML parameters as shell environment variables for use in bash 
 
 ## Bash Scripts
 
-See [BASH_TEMPLATE.md](BASH_TEMPLATE.md) for the standard argument parsing template, `scripts/utils.sh` shared infrastructure pattern, and value-returning function examples.
+See [BASH_TEMPLATE.md](BASH_TEMPLATE.md) for the standard argument parsing template, `scripts/utils.sh` shared infrastructure pattern, `args_to_flags` usage, and `scripts/get_strings.py` for Python-based string generation (experiment names, etc.) from bash.
 
 **Every bash script must source both of the following** (either directly or via `scripts/utils.sh`):
 ```bash
@@ -176,9 +176,10 @@ When the hyperparameter set is small, encode them directly in the name and use i
 exp_name = f"{algorithm}-{lr}-{batch_size}-{dataset}"
 save_path = os.path.join(parameters["model_dir"], exp_name)
 ```
-In bash, construct the name from script arguments and use `$storage_dir` from the sourced config:
+In bash, use `args_to_flags` + `scripts/get_strings.py` to build the name from ARGS and use `$storage_dir` from the sourced config:
 ```bash
-exp_name="${algorithm}-${timesteps}-${gamma}-${env}"
+arg_string=$(args_to_flags ARGS)
+exp_name=$(python scripts/get_strings.py my_exp_name $arg_string)
 model_save_path="$storage_dir/models/$exp_name/"
 ```
 
