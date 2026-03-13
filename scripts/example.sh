@@ -106,5 +106,5 @@ echo "Do something with exp: $exp_name"
 # When calling a subscript that doesn't accept all of this script's ARGS,
 # use args_to_flags_subset with the companion key arrays from utils.sh.
 # This avoids the subscript erroring on unknown flags.
-subset=$(args_to_flags_subset ARGS "${COMMON_TRAINING_ARGS_KEYS[@]}")
+subset=$(args_to_flags_subset ARGS COMMON_TRAINING_ARGS_KEYS)
 # bash scripts/other_script.sh $subset

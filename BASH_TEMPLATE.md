@@ -175,7 +175,7 @@ function populate_common_required_eval_args() {
 COMMON_EVAL_ARGS_KEYS=("${COMMON_REQUIRED_EVAL_ARGS[@]}" "${!COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS[@]}")
 ```
 
-Then call `populate_common_optional_eval_args ARGS` / `populate_common_required_eval_args REQUIRED_ARGS` in your eval scripts, and use `COMMON_EVAL_ARGS_KEYS` with `args_to_flags_subset` when calling eval subscripts.
+Then call `populate_common_optional_eval_args ARGS` / `populate_common_required_eval_args REQUIRED_ARGS` in your eval scripts, and pass `COMMON_EVAL_ARGS_KEYS` (no `$`, no `[@]}`) to `args_to_flags_subset` when calling eval subscripts.
 
 ---
 
@@ -216,7 +216,7 @@ When script B calls script A, passing `args_to_flags ARGS` would include B's scr
 `utils.sh` pre-computes a combined key list from the required args array and the optional defaults dict keys. Pass that single list:
 
 ```bash
-subset=$(args_to_flags_subset ARGS "${COMMON_TRAINING_ARGS_KEYS[@]}")
+subset=$(args_to_flags_subset ARGS COMMON_TRAINING_ARGS_KEYS)
 bash scripts/a.sh $subset
 ```
 
