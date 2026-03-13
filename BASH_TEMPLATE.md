@@ -6,17 +6,17 @@ Reference for bash scripting patterns used in this project family.
 
 ## Quick Reference
 
-| Task | Function | Location |
-|------|----------|----------|
-| Serialize ARGS dict to `--key value` flags | `args_to_flags ARGS` | `utils.sh` |
-| Serialize only a subset of keys | `args_to_flags_subset ARGS KEYS_ARRAY` | `utils.sh` |
-| Get a computed string (e.g. exp name) from Python | `get_string_from_args <name> ARGS` | `utils.sh` |
-| Merge shared optional defaults into ARGS | `populate_common_optional_training_args ARGS` | `utils.sh` |
-| Merge shared required keys into REQUIRED_ARGS | `populate_common_required_training_args REQUIRED_ARGS` | `utils.sh` |
-| Copy all keys from one dict to another | `populate_dict SRC DST` | `utils.sh` |
-| Append all elements from one array to another | `populate_array SRC DST` | `utils.sh` |
-| Copy a subset of keys between dicts | `populate_dict_subset SRC DST KEYS` | `utils.sh` |
-| Copy a subset of elements between arrays | `populate_array_subset SRC DST KEYS` | `utils.sh` |
+| Task | Function |
+|------|----------|
+| Serialize ARGS dict to `--key value` flags | `args_to_flags ARGS` |
+| Serialize only a subset of keys | `args_to_flags_subset ARGS KEYS_ARRAY` |
+| Get a computed string (e.g. exp name) from Python | `get_string_from_args <name> ARGS` |
+| Merge shared optional defaults into ARGS | `populate_common_optional_training_args ARGS` |
+| Merge shared required keys into REQUIRED_ARGS | `populate_common_required_training_args REQUIRED_ARGS` |
+| Copy all keys from one dict to another | `populate_dict SRC DST` |
+| Append all elements from one array to another | `populate_array SRC DST` |
+| Copy a subset of keys between dicts | `populate_dict_subset SRC DST KEYS` |
+| Copy a subset of elements between arrays | `populate_array_subset SRC DST KEYS` |
 
 All functions use bash namerefs — pass variable **names**, not values (no `$`).
 
