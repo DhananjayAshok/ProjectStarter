@@ -82,7 +82,7 @@ if [ "$FAILED" = true ]; then usage; fi
 # Put your script code below:
 ```
 
-### Optional args: always use `"none"`, never `""`
+### Optional args: always handle `"none"` as `None`
 
 The blank-check above enforces that all optional defaults are non-empty. For args that are genuinely absent at the Python level, use `"none"` as the default. `args_to_flags` will emit `--key none`, and `get_strings.py` will pass `None` to `_get_string`.
 
