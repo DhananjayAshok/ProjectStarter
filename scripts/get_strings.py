@@ -8,6 +8,24 @@ This script should ONLY print once, as the output of the function. If there are 
 import sys
 from abc import ABC, abstractmethod
 
+def depathify(string) -> str:
+    """
+    Helper function to convert a path-like string to a string that can be used as a filename or an experiment name.
+
+    :param string: the string to depathify
+    :type string: str
+    :return: the depathified string
+    :rtype: str
+    """
+    return (
+        string.replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace(" ", "_")
+        .replace(".", "_")
+    )
+
+
 class StringFunction(ABC):
     NAME = None # name of the string function, used to call it from bash.
     # By convention, all args are case insensitive and are not allowed to use ' '
