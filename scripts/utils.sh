@@ -75,6 +75,31 @@ function populate_array(){
     _target_arr+=("${_source_arr[@]}")
 }
 
+function populate_array_subset(){
+    local -n _source_arr="$1"
+    local -n _target_arr="$2"
+    local -n _subset_keys="$3"
+    for key in "${_subset_keys[@]}"; do
+        for val in "${_source_arr[@]}"; do
+            if [[ "$val" == "$key" ]]; then
+                _target_arr+=("$val")
+                break
+            fi
+        done
+    done
+}
+
+function populate_dict_subset(){
+    local -n _source_dict="$1"
+    local -n _target_dict="$2"
+    local -n _subset_keys="$3"
+    for key in "${_subset_keys[@]}"; do
+        if [[ -v _source_dict["$key"] ]]; then
+            _target_dict["$key"]="${_source_dict[$key]}"
+        fi
+    done
+}
+
 
 ############################################ Example Usage Below ###################################
 # Delete this and replace with your own stuff for a new project

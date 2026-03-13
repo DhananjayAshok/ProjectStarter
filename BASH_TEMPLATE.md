@@ -2,268 +2,182 @@
 
 Reference for bash scripting patterns used in this project family.
 
+---
 
-## Shared Bash Infrastructure (`scripts/utils.sh`)
+## Quick Reference
 
-`scripts/utils.sh` handles sourcing `configs/config.env` and the virtualenv so downstream scripts only need one line. It also defines shared helper functions: `populate_common_*` functions for shared args, and `args_to_flags` for serializing ARGS to pass to Python (specifically for [getting strings](#scriptsget_stringspy-python-string-generation-from-bash)).
+| Task | Function | Location |
+|------|----------|----------|
+| Serialize ARGS dict to `--key value` flags | `args_to_flags ARGS` | `utils.sh` |
+| Serialize only a subset of keys | `args_to_flags_subset ARGS KEYS_ARRAY` | `utils.sh` |
+| Get a computed string (e.g. exp name) from Python | `get_string_from_args <name> ARGS` | `utils.sh` |
+| Merge shared optional defaults into ARGS | `populate_common_optional_training_args ARGS` | `utils.sh` |
+| Merge shared required keys into REQUIRED_ARGS | `populate_common_required_training_args REQUIRED_ARGS` | `utils.sh` |
+| Copy all keys from one dict to another | `populate_dict SRC DST` | `utils.sh` |
+| Append all elements from one array to another | `populate_array SRC DST` | `utils.sh` |
+| Copy a subset of keys between dicts | `populate_dict_subset SRC DST KEYS` | `utils.sh` |
+| Copy a subset of elements between arrays | `populate_array_subset SRC DST KEYS` | `utils.sh` |
+
+All functions use bash namerefs — pass variable **names**, not values (no `$`).
 
 ---
 
-## Shared Parameters via `utils.sh` (nameref pattern)
+## Script Boilerplate
 
-All operation scripts must declare an ARGS array of required an optional parameters and read in the flags from the input. 
+Every script follows this structure. See `scripts/example.sh` for a working example.
 
 ```bash
 #!/usr/bin/env bash
 
 source scripts/utils.sh || { echo "Could not source utils"; exit 1; }
 
-# Define script-specific defaults and required args
+# Script-specific defaults and required args
 declare -A ARGS
-ARGS["first"]="hello"
-ARGS["second"]="100000"
-REQUIRED_ARGS=("third")
+ARGS["batch_size"]="32"
+ARGS["scheduler"]="none"   # use "none" for absent optionals, never ""
 
-# OPTIONAL: Extend with shared arguments from utils.sh (call BEFORE ALLOWED_FLAGS is computed)
-#populate_common_optional_training_args ARGS
-#populate_common_required_training_args REQUIRED_ARGS
+REQUIRED_ARGS=("dataset")
 
-# Handle parsing and input errors below:
+# OPTIONAL: merge shared args from utils.sh (do this BEFORE ALLOWED_FLAGS)
+populate_common_optional_training_args ARGS
+populate_common_required_training_args REQUIRED_ARGS
+
+# --- Argument parsing (copy verbatim) ---
 ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
-
 USAGE_STR="Usage: $0"
-
-# Add Required to string
 for req in "${REQUIRED_ARGS[@]}"; do
     USAGE_STR+=" --$req <value>"
 done
-
-# Add Optionals to string
 for opt in "${!ARGS[@]}"; do
-    # Only list if NOT in required (to avoid double listing)
     if [[ ! " ${REQUIRED_ARGS[*]} " =~ " ${opt} " ]]; then
         if [[ -z "${ARGS[$opt]}" ]]; then
-            echo "DEFAULT VALUE OF KEY \"$opt\" CANNOT BE BLANK"
-            exit 1
+            echo "DEFAULT VALUE OF KEY \"$opt\" CANNOT BE BLANK"; exit 1
         fi
         USAGE_STR+=" [--$opt <value> (default: ${ARGS[$opt]})]"
     fi
 done
+function usage() { echo "$USAGE_STR"; exit 1; }
 
-function usage() {
-    echo "$USAGE_STR"
-    exit 1
-}
-
-# Parser
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --*)
             FLAG=${1#--}
             VALID=false
             for allowed in "${ALLOWED_FLAGS[@]}"; do
-                if [[ "$FLAG" == "$allowed" ]]; then
-                    VALID=true
-                    break
-                fi
+                if [[ "$FLAG" == "$allowed" ]]; then VALID=true; break; fi
             done
-            if [ "$VALID" = false ]; then
-                echo "Error: Unknown flag --$FLAG"
-                usage
-            fi
-            ARGS["$FLAG"]="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            echo "Unknown argument: $1"
-            usage
-            ;;
+            if [ "$VALID" = false ]; then echo "Error: Unknown flag --$FLAG"; usage; fi
+            ARGS["$FLAG"]="$2"; shift 2 ;;
+        -h|--help) usage ;;
+        *) echo "Unknown argument: $1"; usage ;;
     esac
 done
 
-# Validation
 for req in "${REQUIRED_ARGS[@]}"; do
-    if [[ -z "${ARGS[$req]}" ]]; then
-        echo "Error: Argument --$req is required."
-        FAILED=true
-    fi
+    if [[ -z "${ARGS[$req]}" ]]; then echo "Error: --$req is required."; FAILED=true; fi
 done
-
 if [ "$FAILED" = true ]; then usage; fi
-
-# Print active variables
-echo "Script: $0 Active variables:"
-for key in "${!ARGS[@]}"; do
-    echo "  -$key = ${ARGS[$key]}"
-done
+# --- End argument parsing ---
 
 # Put your script code below:
 ```
 
-### Handling optional args that may be absent: use `"none"`, not `""`
+### Optional args: always use `"none"`, never `""`
 
-Optional ARGS must always have a non-empty default (the blank-check above enforces this). For args that are genuinely optional at the Python level, use `"none"` as the default:
+The blank-check above enforces that all optional defaults are non-empty. For args that are genuinely absent at the Python level, use `"none"` as the default. `args_to_flags` will emit `--key none`, and `get_strings.py` will pass `None` to `_get_string`.
 
+If you don't want Python to receive it at all, handle it in bash:
 ```bash
-ARGS["scheduler"]="none"
-```
-
-`args_to_flags` will emit `--scheduler none`, so any Python script receiving it must convert the string `"none"` to `None`. If you don't want to touch the Python side, handle it in bash before building `arg_string`:
-
-```bash
-# Do this in the script body below "Put your script code below:", not in the setup section
 if [[ "${ARGS["scheduler"]}" == "none" ]]; then
     scheduler_arg=""
 else
     scheduler_arg="--scheduler ${ARGS["scheduler"]}"
 fi
+# Then pass $scheduler_arg directly, not via args_to_flags
 ```
-
-Then pass `$scheduler_arg` directly rather than including `scheduler` in `args_to_flags`.
 
 ---
 
-When multiple scripts share common args, define `populate_*` functions in `scripts/utils.sh`. Call them after your script-specific `ARGS` and `REQUIRED_ARGS`, but before `ALLOWED_FLAGS`:
+## Shared Args Pattern
+
+When multiple scripts share common args, define them once in `utils.sh` and merge them in at the top of each script.
+
+### Defining a shared group (in `utils.sh`)
+
+```bash
+declare -A COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS=(["num_epochs"]="10" ["lr"]="0.001")
+function populate_common_optional_training_args() {
+    populate_dict COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS "$1"
+}
+
+COMMON_REQUIRED_TRAINING_ARGS=("dataset" "model")
+function populate_common_required_training_args() {
+    populate_array COMMON_REQUIRED_TRAINING_ARGS "$1"
+}
+
+# Pre-computed key list for args_to_flags_subset calls
+COMMON_TRAINING_ARGS_KEYS=("${COMMON_REQUIRED_TRAINING_ARGS[@]}" "${!COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS[@]}")
+```
+
+Adding a new optional arg: add to `COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS`. Adding a new required arg: add to `COMMON_REQUIRED_TRAINING_ARGS`. `COMMON_TRAINING_ARGS_KEYS` picks up both automatically.
+
+### Using in a script
 
 ```bash
 populate_common_optional_training_args ARGS          # pass name, not $ARGS
-populate_common_required_training_args REQUIRED_ARGS
-
-ALLOWED_FLAGS=("${REQUIRED_ARGS[@]}" "${!ARGS[@]}")
+populate_common_required_training_args REQUIRED_ARGS # call before ALLOWED_FLAGS
 ```
 
-This merges the shared defaults/required keys into your script's arrays in place.
+### Inheriting a subset of another group's defaults
 
-### Adding a new shared optional arg
-
-In `scripts/utils.sh`, add a key-value pair to the defaults dict:
+When a new group shares some defaults with an existing one, use `populate_dict_subset` to avoid duplicating values:
 
 ```bash
-declare -A COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS=(["num_epochs"]="10" ["new_arg"]="default_val")
+SAME_AS_TRAINING=("lr" "batch_size")
+declare -A MY_GROUP_DEFAULTS
+populate_dict_subset COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS MY_GROUP_DEFAULTS SAME_AS_TRAINING
+MY_GROUP_DEFAULTS["my_extra_arg"]="default_val"
 ```
-
-That's it. Every script calling `populate_common_optional_training_args` will automatically receive `new_arg`.
-
-### Adding a new shared required arg
-
-In `scripts/utils.sh`, add to the required array:
-
-```bash
-COMMON_REQUIRED_TRAINING_ARGS=("dataset" "model" "new_required_arg")
-```
-
-Every script calling `populate_common_required_training_args` will now require `--new_required_arg` at the command line.
-
-### Adding a new group of shared args
-
-If you have a new set of scripts that share different args from the training group, follow the same pattern in `utils.sh`:
-
-```bash
-declare -A COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS=(["split"]="test")
-function populate_common_optional_eval_args() {
-    populate_dict COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS "$1"
-}
-
-COMMON_REQUIRED_EVAL_ARGS=("checkpoint")
-function populate_common_required_eval_args() {
-    populate_array COMMON_REQUIRED_EVAL_ARGS "$1"
-}
-
-COMMON_EVAL_ARGS_KEYS=("${COMMON_REQUIRED_EVAL_ARGS[@]}" "${!COMMON_OPTIONAL_EVAL_ARGS_DEFAULTS[@]}")
-```
-
-Then call `populate_common_optional_eval_args ARGS` / `populate_common_required_eval_args REQUIRED_ARGS` in your eval scripts, and pass `COMMON_EVAL_ARGS_KEYS` (no `$`, no `[@]}`) to `args_to_flags_subset` when calling eval subscripts.
 
 ---
 
-## `args_to_flags`: Converting ARGS to a CLI flag string
+## `args_to_flags` and `args_to_flags_subset`
 
-`args_to_flags` (defined in `scripts/utils.sh`) serializes a bash associative array into a `--key value` string suitable for passing to a Python script or another bash script. Empty values (`""`) are emitted as `none`.
-
-```bash
-# In scripts/utils.sh
-function args_to_flags() {
-    local -n _dict="$1"
-    local result=""
-    for key in "${!_dict[@]}"; do
-        local val="${_dict[$key]}"
-        if [[ -z "$val" ]]; then val="none"; fi
-        result+="--${key} ${val} "
-    done
-    echo "${result% }"
-}
-```
-
-Usage (when you need the raw flag string for other purposes):
+`args_to_flags` serializes a bash associative array into `--key value` form. Empty values become `none`.
 
 ```bash
-arg_string=$(args_to_flags ARGS)
+flags=$(args_to_flags ARGS)
+python scripts/some_script.py $flags
 ```
 
-For calling `get_strings.py`, prefer `get_string_from_args` which handles this internally.
-
-Note: bash associative arrays have no guaranteed iteration order, so flag order may vary. This is fine for `--key value` style CLI args, and the scripts/get_string.py file handles this well.
-
----
-
-## `args_to_flags_subset`: Calling a subscript without passing all ARGS
-
-When script B calls script A, passing `args_to_flags ARGS` would include B's script-specific flags, which A would reject as unknown. Use `args_to_flags_subset` to emit only the keys that A expects.
-
-`utils.sh` pre-computes a combined key list from the required args array and the optional defaults dict keys. Pass that single list:
+When script B calls script A, use `args_to_flags_subset` to emit only the keys A accepts:
 
 ```bash
 subset=$(args_to_flags_subset ARGS COMMON_TRAINING_ARGS_KEYS)
 bash scripts/a.sh $subset
 ```
 
-`COMMON_TRAINING_ARGS_KEYS` is defined once in `utils.sh` after both sources exist:
-
-```bash
-COMMON_TRAINING_ARGS_KEYS=("${COMMON_REQUIRED_TRAINING_ARGS[@]}" "${!COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS[@]}")
-```
-
-When adding new shared args, update only the relevant source (`COMMON_REQUIRED_TRAINING_ARGS` or `COMMON_OPTIONAL_TRAINING_ARGS_DEFAULTS`) — `COMMON_TRAINING_ARGS_KEYS` picks them up automatically.
-
 ---
 
-## `scripts/get_strings.py`: Python string generation from bash
+## `scripts/get_strings.py`: Python String Generation
 
-Sometimes bash needs a computed string (e.g. an experiment name) that is easier to build in Python. `scripts/get_strings.py` provides a registry of named `StringFunction` classes callable from bash.
-
-### Usage: `get_string_from_args`
-
-The preferred way to call it is via the `get_string_from_args` helper in `utils.sh`, which handles the `args_to_flags` conversion internally:
+For computed strings (experiment names, paths) that are easier to build in Python, use the `get_strings.py` registry via `get_string_from_args`:
 
 ```bash
 exp_name=$(get_string_from_args exp_name ARGS)
-if [[ -z "$exp_name" ]]; then
-    echo "Error: failed to build experiment name"
-    exit 1
-fi
+if [[ -z "$exp_name" ]]; then echo "Error: failed to build exp name"; exit 1; fi
 model_save_path="$storage_dir/models/$exp_name/"
 ```
 
-Pass the string function name and the ARGS variable name (no `$`). All `none` values in ARGS are automatically skipped by the parser, so you can pass ARGS directly without pre-filtering.
+`none` values in ARGS are passed as `None` to the Python function.
 
-### How it works
-
-1. Each `StringFunction` subclass declares `NAME`, `REQUIRED_ARGS`, and `OPTIONAL_ARGS`.
-2. `get_string_from_args` serializes ARGS to `--key value` flags and calls `scripts/get_strings.py`.
-3. It prints exactly one string to stdout (captured by bash) and exits non-zero on error.
-
-### Adding a new string function
-
-In `scripts/get_strings.py`:
+### Adding a new string function (in `scripts/get_strings.py`)
 
 ```python
 class MyExpName(StringFunction):
     NAME = "my_exp_name"
     REQUIRED_ARGS = ["dataset", "model"]
-    OPTIONAL_ARGS = {"version": "v1"}
+    OPTIONAL_ARGS = {"version": "v1"}   # prefer controlling defaults via utils.sh instead
 
     def _get_string(self, **kwargs) -> str:
         return f"{kwargs['dataset']}_{kwargs['model']}_{kwargs['version']}"
@@ -271,16 +185,13 @@ class MyExpName(StringFunction):
 STRING_FUNCTIONS = [..., MyExpName]
 ```
 
-### Key rules
-- `_get_string` must return a string with **no spaces** if it will be used as a path or experiment name
-- Unexpected arguments passed in are silently ignored — keep required args minimal
-- Optional args should have sensible defaults; prefer controlling defaults via `populate_common_optional_*` in `utils.sh` rather than hardcoding them here
-- `none` values are **automatically skipped** by the parser — a `--key none` flag is never passed to `_get_string`. This means you can safely pass the full `$arg_string` (which may contain `none` values) without those keys showing up as unexpected args or overriding defaults in `OPTIONAL_ARGS`
-
+Rules:
+- `_get_string` must return a string with **no spaces** if used as a path
+- Unexpected arguments are silently ignored — keep `REQUIRED_ARGS` minimal
+- `none` values arrive as `None` in kwargs; handle or ignore as needed
 
 ---
 
 ## Example Script
 
-See the working example [below](scripts/example.sh) to understand how these pieces come together. 
-
+See [scripts/example.sh](scripts/example.sh) for a complete working example of all the above.
