@@ -20,9 +20,7 @@ def depathify(string) -> str:
     return (
         string.replace("/", "_")
         .replace("\\", "_")
-        .replace(":", "_")
         .replace(" ", "_")
-        .replace(".", "_")
     )
 
 def log(message: str) -> None:
