@@ -25,6 +25,38 @@ import gc
 MIN_QUERIES_PER_MINUTE = 1
 
 
+def model_factory(model_name: str, model_kind: str, model_engine: str, parameters: dict=None, **model_kwargs) -> InferenceModel:
+    """
+    Factory function to create an inference model instance based on the specified kind and engine.
+
+    :param model_name: The identifier for the model to load (e.g. "gpt-4o", "mistral-vlm-1b").
+    :type model_name: str
+    :param model_kind: The kind of model to create ("lm" for language models, "vlm" for vision-language models, etc.).
+    :type model_kind: str
+    :param model_engine: The engine or API to use for the model ("openai", "anthropic", "huggingface", "openrouter", "vLLM", etc.).
+    :type model_engine: str
+    :param parameters: Loaded parameters dict. If None, loads from config.
+    :type parameters: dict[str, Any] or None
+    :param model_kwargs: Additional keyword arguments to pass to the model constructor.
+    :type model_kwargs: dict
+    :return: An instance of a subclass of InferenceModel corresponding to the specified kind and engine.
+    :rtype: InferenceModel
+    """
+    parameters = load_parameters(parameters)
+    if model_kind == "huggingface":
+        return HuggingFaceModel(model=model_name, model_kind=model_kind, parameters=parameters, **model_kwargs)
+    elif model_kind == "openai":
+        return OpenAIModel(model=model_name, parameters=parameters, **model_kwargs)
+    elif model_kind == "anthropic":
+        return AnthropicModel(model=model_name, parameters=parameters, **model_kwargs)
+    elif model_kind == "openrouter":
+        return OpenRouterModel(model=model_name, parameters=parameters, **model_kwargs)
+    elif model_kind == "vLLM":
+        return vLLMModel(model=model_name, parameters=parameters, **model_kwargs)
+    else:
+        log_error(f"model_kind {model_kind} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters) 
+
+
 class RateLimitedAPIBase:
     """
     Mixin that provides rate-limited API client state and ``wait()`` logic.
