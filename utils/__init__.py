@@ -12,6 +12,7 @@ from utils.lm_inference import (
     HuggingFaceModel,
     remove_from_model_store,
     clear_model_store,
+    model_factory
 )
 from utils.embedding import (
     TextEmbeddingModel,
