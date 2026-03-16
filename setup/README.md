@@ -34,7 +34,7 @@ uv add accelerate click huggingface_hub seaborn pandas tqdm numpy openai anthrop
 | `anthropic` | `AnthropicModel` | Remove `AnthropicModel` from [`utils/lm_inference.py`](../utils/lm_inference.py) |
 | `Pillow` | Image inputs for all VLM inference | Remove image support from [`utils/lm_inference.py`](../utils/lm_inference.py) |
 | `torch` | Local HuggingFace model GPU execution | Remove `HuggingFaceModel` and model store from [`utils/lm_inference.py`](../utils/lm_inference.py) |
-| `transformers` | Local HuggingFace model loading (LM + VLM) | Same as `torch` above |
+| `accelerate`, `transformers` | Local HuggingFace model loading (LM + VLM) | Same as `torch` above |
 | `torchvision` | Image preprocessing for VLM inference via `HuggingFaceModel` | Don't use VLMs with `HuggingFaceModel` |
 | `llm-utils` (submodule) | Efficient, scalable, offline, batched LLM inference | Remove [`scripts/llm-utils.sh`](../scripts/llm-utils.sh) and remove the submodule |
 
