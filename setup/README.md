@@ -21,7 +21,7 @@ We never use this main file, so delete it. This will create a project with the n
 
 You can now add pip packages with:
 ```console
-uv add click huggingface_hub seaborn pandas tqdm numpy openai anthropic Pillow torch transformers torchvision
+uv add accelerate click huggingface_hub seaborn pandas tqdm numpy openai anthropic Pillow torch transformers torchvision
 ```
 
 | Package | Features provided | How to remove |
