@@ -873,7 +873,7 @@ def infer_model_kind(model: str, error_out: bool = False) -> Optional[str]:
         )
     return None
 
-def model_factory(model_name: str, model_kind: str, model_engine: str, parameters: dict=None, **model_kwargs) -> InferenceModel:
+def model_factory(*, model_name: str, model_kind: str, model_engine: str, parameters: dict=None, **model_kwargs) -> InferenceModel:
     """
     Factory function to create an inference model instance based on the specified kind and engine.
 
@@ -891,17 +891,15 @@ def model_factory(model_name: str, model_kind: str, model_engine: str, parameter
     :rtype: InferenceModel
     """
     parameters = load_parameters(parameters)
-    if model_kind == "huggingface":
+    if model_engine == "huggingface":
         return HuggingFaceModel(model=model_name, model_kind=model_kind, parameters=parameters, **model_kwargs)
-    elif model_kind == "openai":
+    elif model_engine == "openai":
         return OpenAIModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_kind == "anthropic":
+    elif model_engine == "anthropic":
         return AnthropicModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_kind == "openrouter":
+    elif model_engine == "openrouter":
         return OpenRouterModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_kind == "vLLM":
+    elif model_engine == "vLLM":
         return vLLMModel(model=model_name, parameters=parameters, **model_kwargs)
     else:
-        log_error(f"model_kind {model_kind} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters) 
-
-
+        log_error(f"model_engine {model_engine} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters) 
