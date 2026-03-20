@@ -767,6 +767,7 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
+                max_length=None,
                 do_sample=False,
                 top_p=None,
                 temperature=None,
