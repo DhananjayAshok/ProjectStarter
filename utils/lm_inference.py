@@ -779,7 +779,8 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
             )
             output_only = outputs[:, start_index:]
             decoded = processor.batch_decode(output_only, skip_special_tokens=True)
-            final_texts.append(decoded[0].lstrip("assistant").strip())
+            for item in decoded:
+                final_texts.append(item.lstrip("assistant").strip().split("[STOP]")[0])
         return final_texts
 
 
