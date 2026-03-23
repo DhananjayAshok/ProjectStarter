@@ -743,8 +743,8 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
         )
 
     def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
-        content = [{"type": "text", "text": text}]
         if images is not None:
+            content = [{"type": "text", "text": text}]
             for img in images:
                 content.append(
                     {
@@ -752,8 +752,9 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
                         "image": img,
                     }
                 )
+        else:
+            content = text
         return [{"role": "user", "content": content}]
-
     def do_infer(
         self,
         texts: list[str],
