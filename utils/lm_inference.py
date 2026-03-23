@@ -743,7 +743,7 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
         )
 
     def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
-        if images is not None:
+        if images:
             content = [{"type": "text", "text": text}]
             for img in images:
                 content.append(
