@@ -742,19 +742,16 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
             load_fn=lambda *, model_name, model_kwargs: load_model_into_store(model_name, model_kind, model_kwargs),
         )
 
-    def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
-        if images:
+def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
+        if self.model_kind in VLM_MODELS:
             content = [{"type": "text", "text": text}]
             for img in images:
-                content.append(
-                    {
-                        "type": "image",
-                        "image": img,
-                    }
-                )
+                content.append({"type": "image", "image": img})
         else:
             content = text
         return [{"role": "user", "content": content}]
+
+    
     def do_infer(
         self,
         texts: list[str],
