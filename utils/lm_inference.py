@@ -444,7 +444,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
             "image_url": {"url": f"data:image/jpeg;base64,{image}"},
         }
 
-    def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
+    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None) -> Any:
         """
         Send a message to the OpenAI chat completions endpoint.
 
@@ -452,15 +452,27 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
         :type messages: list[dict]
         :param max_new_tokens: Maximum number of tokens to generate.
         :type max_new_tokens: int
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]
         :return: The raw API response object.
         :rtype: Any
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_new_tokens,
-        )
-        return response
+        kwargs = dict(model=self.model, messages=messages, max_tokens=max_new_tokens)
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        max_tries = 3
+        for attempt in range(max_tries):
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+                return response
+            except Exception as e:
+                log_warn(f"OpenAI API call failed on attempt {attempt+1}/{max_tries} with error: {e}")
+                if attempt < max_tries - 1:
+                    # exponential backoff with time_to_wait between attempts
+                    backoff_time = self.seconds_to_wait * (2 ** attempt)
+                    log_info(f"Waiting for {backoff_time:.2f} seconds before retrying...")
+                    sleep(backoff_time)
+        log_error(f"OpenAI API call failed after {max_tries} attempts. Last error: {e}")
 
     def get_output_texts(self, response: Any) -> str:
         """
