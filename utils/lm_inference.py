@@ -102,6 +102,7 @@ class InferenceModel(ABC):
         texts: list[str],
         max_new_tokens: int,
         images: list[list[Image.Image]] = None,
+        temperature: Optional[float] = None,
     ) -> list[str]:
         """
         Run inference on a batch of text prompts with associated images. Assumes validated inputs
@@ -112,6 +113,8 @@ class InferenceModel(ABC):
         :type images: list[list[Image.Image]]
         :param max_new_tokens: Maximum number of tokens to generate per response.
         :type max_new_tokens: int
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]
         :return: Post-processed output strings, one per sample.
         :rtype: list[str]
         """
@@ -122,6 +125,7 @@ class InferenceModel(ABC):
         texts: Union[str, list[str]],
         max_new_tokens: int,
         images: Union[list[Image.Image], list[list[Image.Image]]] = None,
+        temperature: Optional[float] = None,
     ) -> Union[str, list[str]]:
         """
         Run inference on a batch of text prompts with associated images.
@@ -135,6 +139,8 @@ class InferenceModel(ABC):
         :param images: A list of PIL Images (when ``texts`` is a single string) or a list of lists
             of PIL Images (when ``texts`` is a list). If None, no images are passed.
         :type images: list[Image.Image] or list[list[Image.Image]] or None
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]        
         :return: A single output string if ``texts`` was a string, otherwise a list of output strings.
         :rtype: str or list[str]
         """
@@ -190,7 +196,7 @@ class InferenceModel(ABC):
                 )
         else:
             images = [[] for _ in texts]
-        results = self.do_infer(texts, images, max_new_tokens)
+        results = self.do_infer(texts, images, max_new_tokens, temperature=temperature)
         if passed_in_str:
             return results[0]
         else:
@@ -288,7 +294,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         pass
 
     @abstractmethod
-    def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
+    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None) -> Any:
         """
         Send messages to the API client and return raw response texts.
 
@@ -296,6 +302,8 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         :type messages: list[dict]
         :param max_new_tokens: Maximum number of tokens to generate.
         :type max_new_tokens: int
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]
         :return: Response from API
         :rtype: Any
         """
@@ -333,6 +341,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         texts: list[str],
         images: list[list[Image.Image]],
         max_new_tokens: int,
+        temperature: Optional[float] = None,
     ) -> list[str]:
         """
         Encodes all images to base64, constructs API message dicts, enforces
@@ -344,6 +353,8 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         :type images: list[list[Image.Image]]
         :param max_new_tokens: Maximum number of tokens to generate per response.
         :type max_new_tokens: int
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]
         :return: Post-processed output strings, one per sample.
         :rtype: list[str]
         """
@@ -371,20 +382,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         ) in (
             inputs
         ):  # there is no pricing advantage for batch_size > 1, so just do them sequentially to allow the caller of this function to pass lists of any size.
-            success = False
-            n_tries = 0
-            response = ""
-            while not success and n_tries < 3:  # Retry up to 3 times
-                try:
-                    response = self.query_client([input_message], max_new_tokens)
-                    success = True
-                except Exception as e:
-                    n_tries += 1
-                    log_warn(
-                        f"API query failed on try {n_tries} with error: {e}. Retrying..."
-                    )
-            if response == "":
-                log_warn(f"API query failed after 3 tries. Returning empty response for input: {input_message}")
+            response = self.query_client([input_message], max_new_tokens, temperature=temperature)
             responses.append(response)
         outputs = []
         for response in responses:
@@ -770,6 +768,7 @@ def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
         texts: list[str],
         images: list[list[Image.Image]],
         max_new_tokens: int,
+        temperature: Optional[float] = None,
     ) -> list[str]:
         if self.is_defunct:
             log_error(
@@ -780,31 +779,37 @@ def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
             log_error(
                 f"Model {self.model} of kind {self.model_kind} cannot handle image inputs."
             )
+        messages = [
+            self.get_single_message_list(text, img_list)
+            for text, img_list in zip(texts, images)
+        ]
         processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
         model = HUGGINGFACE_MODEL_MAPPING[self.model].model
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
+        tokenizer = None
+        if hasattr(processor, "tokenizer"):
+            tokenizer = processor.tokenizer
+        else:
+            tokenizer = processor
+        start_index = inputs["input_ids"].shape[1]
+        do_sample = temperature is not None and temperature > 0
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            top_p=None,
+            temperature=temperature if do_sample else None,
+            top_k=None,
+            repetition_penalty=1.2,
+            stop_strings=["[STOP]"],
+            pad_token_id=tokenizer.eos_token_id,
+            tokenizer=tokenizer,
+        )
+        output_only = outputs[:, start_index:]
+        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
         final_texts = []
-        for text, img_list in zip(texts, images):
-            msg = self.get_single_message_list(text, img_list)
-            inputs = get_inputs(self.model_kind, processor, [msg]).to(model.device)
-            start_index = inputs["input_ids"].shape[1]
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                max_length=None,
-                do_sample=False,
-                top_p=None,
-                temperature=None,
-                top_k=None,
-                repetition_penalty=1.2,
-                stop_strings=["[STOP]"],
-                pad_token_id=tokenizer.eos_token_id,
-                tokenizer=tokenizer,
-            )
-            output_only = outputs[:, start_index:]
-            decoded = processor.batch_decode(output_only, skip_special_tokens=True)
-            for item in decoded:
-                final_texts.append(item.lstrip("assistant").strip().split("[STOP]")[0])
+        for text in output_texts:
+            final_texts.append(text.lstrip("assistant").strip())
         return final_texts
 
 
