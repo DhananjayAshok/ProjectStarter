@@ -47,9 +47,9 @@ class Plotter:
         self.default_plt_params = plt.rcParams.copy()
         self.default_plt_params["font.size"] = DEFAULTS["font_size]
         self.default_plt_params["axes.labelsize"] = DEFAULTS["labels_font_size"]
-        self.default_plt_params["xtick.labelsize"] = 
-        self.default_plt_params["ytick.labelsize"] = 
-        self.default_plt_params["axes.titlesize"] = 
+        self.default_plt_params["xtick.labelsize"] = DEFAULTS["xtick_font_size"]
+        self.default_plt_params["ytick.labelsize"] = DEFAULTS["ytick_font_size"]
+        self.default_plt_params["axes.titlesize"] = DEFAULTS["title_font_size"]
         
         
         self.set_size_parameters()
