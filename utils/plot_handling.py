@@ -176,7 +176,7 @@ class Plotter:
         self.set_size_default()
         done = False
         while not done:
-            log_info(f"Plot with sizes: ", parameters=self.size_params)
+            log_info(f"Plot with sizes: ", parameters=self.parameters)
             log_dict(self.size_params, n_indents=1, parameters=self.parameters)
             plot_func()
             plt.show()
