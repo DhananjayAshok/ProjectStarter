@@ -242,6 +242,7 @@ class Plotter:
         skip_text_rotation: float = 20,
         x_tick_rotation: float = 45,
         y_label: str = "Percentage (%)",
+        tight_layout: bool = True,
     ) -> Callable[[], None]:
         """
         Return a function that creates a stacked percentage bar plot.
@@ -270,6 +271,8 @@ class Plotter:
         :type x_tick_rotation: float
         :param y_label: Label for the y-axis.
         :type y_label: str
+        :param tight_layout: Whether to apply tight_layout to the plot for better spacing.
+        :type tight_layout: bool
         :return: A zero-argument callable that renders the stacked bar plot.
         :rtype: Callable[[], None]
         """
@@ -354,6 +357,7 @@ class Plotter:
                 frameon=False,
                 fontsize=self.size_params["legend_font_size"],
             )
-            plt.tight_layout(rect=[0, 0, 1, 0.95])
+            if tight_layout:
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
 
         return plot_func
