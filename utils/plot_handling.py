@@ -99,6 +99,8 @@ class Plotter:
         plt.rcParams.update({"ytick.labelsize": ytick_font_size * scaler})
         if title_font_size is None:
             title_font_size = self.default_plt_params["axes.titlesize"]
+        if legend_font_size is None:
+            legend_font_size = self.DEFAULTS["legend_font_size"]
         plt.rcParams.update({"axes.titlesize": title_font_size * scaler})
         self.size_params["font_size"] = font_size * scaler
         self.size_params["labels_font_size"] = labels_font_size * scaler
