@@ -24,6 +24,15 @@ class Plotter:
         []
     )  # Add your desired colours here, maybe even change this to a dict if you want
 
+    DEFAULTS = {
+        "font_size": 16, 
+        "labels_font_size": 19,
+        "xtick_font_size": 19,
+        "ytick_font_size": 15,
+        "legend_font_size": 16,
+        "title_font_size": 20
+    }
+
     def __init__(self, parameters: Optional[dict[str, Any]] = None) -> None:
         """
         Initialise the Plotter, load parameters, and apply default seaborn styling.
@@ -34,23 +43,31 @@ class Plotter:
         self.parameters = load_parameters(parameters)
         self.size_params = {}
         sns.set_style("whitegrid")
+        plt.rcParams["font.serif"] = ["Times New Roman"]
         self.default_plt_params = plt.rcParams.copy()
+        self.default_plt_params["font.size"] = DEFAULTS["font_size]
+        self.default_plt_params["axes.labelsize"] = DEFAULTS["labels_font_size"]
+        self.default_plt_params["xtick.labelsize"] = 
+        self.default_plt_params["ytick.labelsize"] = 
+        self.default_plt_params["axes.titlesize"] = 
+        
+        
         self.set_size_parameters()
 
     def set_size_parameters(
         self,
         scaler: float = 1,
-        font_size: Optional[float] = 16,
-        labels_font_size: Optional[float] = 19,
-        xtick_font_size: Optional[float] = 19,
-        ytick_font_size: Optional[float] = 15,
-        legend_font_size: Optional[float] = 16,
-        title_font_size: Optional[float] = 20,
+        font_size: Optional[float] = None,
+        labels_font_size: Optional[float] = None,
+        xtick_font_size: Optional[float] = None,
+        ytick_font_size: Optional[float] = None,
+        legend_font_size: Optional[float] = None,
+        title_font_size: Optional[float] = None,
     ) -> None:
         """
         Set matplotlib font size parameters, applying an optional uniform scaler.
 
-        Passing ``None`` for any size parameter falls back to the matplotlib default
+        Passing ``None`` for any size parameter falls back to the class default
         for that setting. All values are stored in ``self.size_params`` after scaling.
 
         :param scaler: Multiplicative scaler applied to all font sizes.
@@ -109,17 +126,6 @@ class Plotter:
         )
         return
 
-    def set_size_parameters_from_dict(self, size_params: dict[str, float]) -> None:
-        """
-        Set size parameters from a dictionary. This trusts that the dictionary is correct and does not check for errors.
-
-        :param size_params: Dictionary of size parameter names to values, matching
-            the keyword arguments of ``set_size_parameters``.
-        :type size_params: dict[str, float]
-        """
-        self.set_size_parameters(**size_params)
-        return
-
     def get_size_input_number(self, key_name: str) -> float:
         """
         Interactively prompt the user to enter a new value for a size parameter.
@@ -165,6 +171,7 @@ class Plotter:
         :param plot_func: A zero-argument callable that creates a matplotlib plot.
         :type plot_func: Callable[[], None]
         """
+        self.set_size_default()
         done = False
         while not done:
             log_info(f"Plot with sizes: ", parameters=self.size_params)
@@ -210,6 +217,7 @@ class Plotter:
             figure_dir = os.path.dirname(figure_path)
             if not os.path.exists(figure_dir):
                 os.makedirs(figure_dir)
+            figure_path = figure_path.replace(".pdf", "").replace(".png", "")
             plt.savefig(f"{figure_path}.pdf")
             plt.savefig(f"{figure_path}.png")
             log_info(f"Saved figure to {figure_path}.pdf", parameters=self.parameters)
