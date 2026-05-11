@@ -8,9 +8,11 @@
     ],    
     "allow": [
       "Bash(cat:*)",
+      "Bash(cd:*)",     
       "Bash(du:*)",
       "Bash(echo:*)",
       "Bash(find:*)",
+      "Bash(gcc:*)",      
       "Bash(head:*)",
       "Bash(grep:*)",
       "Bash(ls:*)",
