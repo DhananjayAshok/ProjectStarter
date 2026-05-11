@@ -8,6 +8,7 @@
     ],    
     "allow": [
       "Bash(cat:*)",
+      "Bash(tmp.sh)",      
       "Bash(cd:*)",     
       "Bash(du:*)",
       "Bash(echo:*)",
