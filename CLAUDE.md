@@ -26,9 +26,6 @@ cd setup
 uv add <name>
 cd ..
 ```
-
-`setup/uv.lock` must be committed to version control.
-
 ---
 
 ## Configuration System
