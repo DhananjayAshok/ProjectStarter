@@ -44,6 +44,8 @@ All `.yaml` files in `configs/` are automatically loaded and merged into a singl
 - From `storage_dir`: `data_dir`, `model_dir`, `tmp_dir`, `sync_dir`
 - From `results_dir`: `log_dir`, `figure_dir`
 
+You can use these in your code. 
+
 ### Generating `configs/config.env`
 Run from project root whenever YAML configs change:
 ```bash
@@ -216,5 +218,8 @@ extended_args = add_meta_details(base_args, {"val_loss": 0.42, "epoch": 5})
 ---
 
 ## Permissions
-
 Read .claude/settings.json for the list of permitted commands. You can compose any of these freely while you work. Do not ask for permission if it is specified in this list. 
+Never use compound commands (e.g. cat x && echo y etc.). Instead, write them to tmp.sh and do bash tmp.sh
+
+
+So if you want to run some python code after sourcing the environment, don't try the compound command: "source setup/.venv/bin/activate && python -c ...", but rather write this string to a tmp.sh and run bash tmp.sh
