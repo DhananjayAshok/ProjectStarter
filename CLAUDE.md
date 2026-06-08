@@ -223,3 +223,5 @@ Never use compound commands (e.g. cat x && echo y etc.). Instead, write them to 
 
 
 So if you want to run some python code after sourcing the environment, don't try the compound command: "source setup/.venv/bin/activate && python -c ...", but rather write this string to a tmp.sh and run bash tmp.sh
+
+When doing this, always use bash tmp.sh, and not the absolute path to tmp.sh
