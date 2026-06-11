@@ -11,7 +11,6 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from transformers import (
-    AutoModel,
     AutoTokenizer,
     AutoProcessor,
     AutoModelForCausalLM,
@@ -25,25 +24,69 @@ import uuid
 
 MIN_QUERIES_PER_MINUTE = 1
 
+# Placeholder per-model rate limits (queries per minute). All currently set to
+# the previous global default of 60; tune per-model as needed.
+_RATE_LIMITS: dict[str, int] = {
+    "gpt-4o-mini": 60,
+    "gpt-4o": 60,
+    "gpt-4": 60,
+    "gpt-5": 60,
+    "claude-opus-4.7": 60,
+    "claude-sonnet-4-6": 60,
+    "claude-haiku-4-5-20251001": 60,
+    "google/gemini-3.1-pro-preview": 60,
+    "qwen/qwen3-vl-235b-a22b-instruct": 60,
+}
+
+
+def get_max_queries_per_minute(model: str, parameters: dict[str, Any]) -> int:
+    """
+    Look up the per-model rate limit (queries per minute) from ``_RATE_LIMITS``.
+
+    A key matches ``model`` if the key equals ``model``, the key is a substring
+    of ``model``, or ``model`` is a substring of the key. If multiple keys
+    match, the longest (most specific) one wins. Falls back to
+    ``parameters["default_max_queries_per_minute"]`` (logging a warning) if no
+    key matches.
+
+    :param model: The model identifier string.
+    :type model: str
+    :param parameters: Loaded parameters dict.
+    :type parameters: dict[str, Any]
+    :return: The queries-per-minute limit to use for ``model``.
+    :rtype: int
+    """
+    matches = [key for key in _RATE_LIMITS if key in model or model in key]
+    if matches:
+        best = max(matches, key=len)
+        return _RATE_LIMITS[best]
+    log_warn(
+        f"Model {model} not found in _RATE_LIMITS (no exact or substring match). "
+        f"Using default_max_queries_per_minute from project parameters.",
+        parameters=parameters,
+    )
+    return parameters["default_max_queries_per_minute"]
 
 
 class RateLimitedAPIBase:
     """
     Mixin that provides rate-limited API client state and ``wait()`` logic.
 
-    Shared by ``APIModel`` (inference) and ``APITextEmbeddingModel`` (embedding)
-    to avoid duplicating the init and rate-limiting code.
+    Shared by ``APIModel`` and any future rate-limited API-backed model
+    wrapper to avoid duplicating the init and rate-limiting code.
     """
 
     def __init__(
         self,
         *,
         model: str,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         self.parameters = load_parameters(parameters)
         self.model = model
+        if max_queries_per_minute is None:
+            max_queries_per_minute = get_max_queries_per_minute(model, self.parameters)
         self.max_queries_per_minute = max_queries_per_minute
         self.last_query_time = 0
         self.seconds_to_wait = 60 / self.max_queries_per_minute
@@ -71,9 +114,10 @@ class OpenAICompatibleAPIBase(RateLimitedAPIBase):
     """
     Mixin that extends ``RateLimitedAPIBase`` with an OpenAI-compatible client.
 
-    Initializes ``self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)``
-    after the rate-limiting state is set up. Shared by all OpenAI-compatible inference
-    and embedding models to avoid repeating client creation in every subclass.
+    Initializes ``self.client = OpenAI(base_url=base_url, api_key=api_key)``
+    after the rate-limiting state is set up. Shared by all OpenAI-compatible
+    models (``OpenAIAPIModel`` and its subclasses) to avoid repeating client
+    creation in every subclass.
     """
 
     def __init__(
@@ -82,7 +126,7 @@ class OpenAICompatibleAPIBase(RateLimitedAPIBase):
         model: str,
         base_url: Optional[str],
         api_key: Optional[str] = None,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         super().__init__(
@@ -105,7 +149,9 @@ class InferenceModel(ABC):
         max_new_tokens: int,
         images: list[list[Image.Image]] = None,
         temperature: Optional[float] = None,
-    ) -> list[str]:
+        stop_strings: list[str] = None,
+        num_return_sequences: int = 1,
+    ) -> list[list[str]]:
         """
         Run inference on a batch of text prompts with associated images. Assumes validated inputs
 
@@ -117,10 +163,27 @@ class InferenceModel(ABC):
         :type max_new_tokens: int
         :param temperature: Sampling temperature. None means model default.
         :type temperature: Optional[float]
-        :return: Post-processed output strings, one per sample.
-        :rtype: list[str]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of independent sequences to return per prompt.
+        :type num_return_sequences: int
+        :return: Post-processed output strings shaped ``[batch, num_return_sequences]``.
+        :rtype: list[list[str]]
         """
         pass
+
+    def get_output_final(self, output_text: str) -> str:
+        """
+        Post-process a single output text by truncating at the ``[STOP]`` token and stripping whitespace.
+
+        :param output_text: Raw output string from the model.
+        :type output_text: str
+        :return: Cleaned output string with content after ``[STOP]`` removed.
+        :rtype: str
+        """
+        if "[STOP]" in output_text:
+            output_text = output_text.split("[STOP]")[0]
+        return output_text.strip()
 
     def infer(
         self,
@@ -128,11 +191,16 @@ class InferenceModel(ABC):
         max_new_tokens: int,
         images: Union[list[Image.Image], list[list[Image.Image]]] = None,
         temperature: Optional[float] = None,
-    ) -> Union[str, list[str]]:
+        stop_strings: list[str] = None,
+        num_return_sequences: int = 1,
+    ) -> Union[str, list[str], list[list[str]]]:
         """
         Run inference on a batch of text prompts with associated images.
 
         If a single string is passed, a single string is returned. If a list is passed, a list is returned.
+
+        When ``num_return_sequences > 1``, each item is itself a list of
+        ``num_return_sequences`` output strings.
 
         :param texts: A single text prompt or a list of text prompts.
         :type texts: str or list[str]
@@ -142,9 +210,16 @@ class InferenceModel(ABC):
             of PIL Images (when ``texts`` is a list). If None, no images are passed.
         :type images: list[Image.Image] or list[list[Image.Image]] or None
         :param temperature: Sampling temperature. None means model default.
-        :type temperature: Optional[float]        
-        :return: A single output string if ``texts`` was a string, otherwise a list of output strings.
-        :rtype: str or list[str]
+        :type temperature: Optional[float]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of independent sequences to return per prompt.
+        :type num_return_sequences: int
+        :return: A single output string if ``texts`` was a string and ``num_return_sequences == 1``;
+            a list of output strings if ``texts`` was a list and ``num_return_sequences == 1``;
+            a list of ``num_return_sequences`` strings if ``texts`` was a string and
+            ``num_return_sequences > 1``; or a list of such lists otherwise.
+        :rtype: str or list[str] or list[list[str]]
         """
         passed_in_str = isinstance(texts, str)
         if passed_in_str:
@@ -198,11 +273,102 @@ class InferenceModel(ABC):
                 )
         else:
             images = [[] for _ in texts]
-        results = self.do_infer(texts, images, max_new_tokens, temperature=temperature)
-        if passed_in_str:
-            return results[0]
+        results = self.do_infer(texts, images, max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences)
+        if num_return_sequences == 1:
+            if passed_in_str:
+                return results[0][0]
+            else:
+                return [r[0] for r in results]
         else:
-            return results
+            if passed_in_str:
+                return results[0]
+            else:
+                return results
+
+    @abstractmethod
+    def infer_messages(
+        self,
+        messages: list[dict],
+        max_new_tokens: int,
+        temperature: Optional[float] = None,
+        stop_strings: list[str] = None,
+    ) -> str:
+        """Run inference on a pre-formatted chat messages list. Returns a single string."""
+        pass
+
+    def partial_temperature(
+        self,
+        texts: Union[str, list[str]],
+        max_new_tokens: int,
+        switch_phrase: str,
+        images: Union[list[Image.Image], list[list[Image.Image]]] = None,
+        temperature: Optional[float] = None,
+        stop_strings: list[str] = None,
+        num_return_sequences: int = 1,
+    ) -> Union[str, None, list]:
+        """
+        Run inference once at ``temperature``, then deterministically complete the
+        portion of the output following ``switch_phrase``.
+
+        Samples a "thinking" prefix at ``temperature``; if ``switch_phrase`` is found
+        in the output, truncates before it and re-queries (at ``temperature=None``,
+        i.e. deterministic) with the truncated output plus ``switch_phrase`` appended
+        to the prompt, to obtain a deterministic final answer.
+
+        :param texts: A single text prompt. Lists are not supported.
+        :type texts: str
+        :param max_new_tokens: Maximum number of tokens to generate per response.
+        :type max_new_tokens: int
+        :param switch_phrase: Phrase marking the boundary between "thinking" and "answer".
+        :type switch_phrase: str
+        :param images: A list of PIL Images, or None.
+        :type images: list[Image.Image] or None
+        :param temperature: Sampling temperature for the first pass. None means model default.
+        :type temperature: Optional[float]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of independent sequences to return.
+        :type num_return_sequences: int
+        :return: The completed output string (or None if ``switch_phrase`` was not found),
+            or a list of such results when ``num_return_sequences > 1``.
+        :rtype: str or None or list
+        """
+        if isinstance(texts, list):
+            log_error("partial_temperature expects a single text input, not a list.")
+
+        first_outputs = self.infer(
+            texts,
+            max_new_tokens,
+            images=images,
+            temperature=temperature,
+            stop_strings=stop_strings,
+            num_return_sequences=num_return_sequences,
+        )
+
+        first_outputs_list = [first_outputs] if num_return_sequences == 1 else first_outputs
+
+        results = []
+        for output in first_outputs_list:
+            if switch_phrase not in output:
+                results.append(None)
+                continue
+            output_so_far = output.split(switch_phrase)[0]
+            n_tokens_estimated = len(output_so_far.split())
+            second_max_tokens = max(1, max_new_tokens - n_tokens_estimated)
+            second_prompt = texts + "\nHere is what you said: " + output_so_far + "\n" + switch_phrase
+            second_output = self.infer(
+                second_prompt,
+                second_max_tokens,
+                images=images,
+                temperature=None,
+                stop_strings=stop_strings,
+                num_return_sequences=1,
+            )
+            results.append(output_so_far + "\n" + switch_phrase + " " + second_output)
+
+        if num_return_sequences == 1:
+            return results[0]
+        return results
 
 
 class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
@@ -214,10 +380,12 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
     and ``get_output_texts``.
     """
 
+    SUPPORTS_NATIVE_N: bool = False
+
     def __init__(
         self,
         model: str,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
@@ -226,7 +394,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         :param model: The model identifier string (e.g. ``"gpt-4o"``).
         :type model: str
         :param max_queries_per_minute: Maximum number of queries allowed per minute. Must be at least 1.
-        :type max_queries_per_minute: int
+        :type max_queries_per_minute: Optional[int]
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
@@ -255,7 +423,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
                 encoded_images.append(
                     base64.b64encode(image_file.read()).decode("utf-8")
                 )
-        self.clear_encoded_image_cache(make=False)        
+        self.clear_encoded_image_cache(make=False)
         return encoded_images
 
     def clear_encoded_image_cache(self, make=True) -> str:
@@ -274,19 +442,6 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
             os.makedirs(cache_dir)
         return cache_dir
 
-    def get_output_final(self, output_text: str) -> str:
-        """
-        Post-process a single output text by truncating at the ``[STOP]`` token and stripping whitespace.
-
-        :param output_text: Raw output string from the model.
-        :type output_text: str
-        :return: Cleaned output string with content after ``[STOP]`` removed.
-        :rtype: str
-        """
-        if "[STOP]" in output_text:
-            output_text = output_text.split("[STOP]")[0]
-        return output_text.strip()
-
     @abstractmethod
     def get_image_input_dict(self, image: str) -> dict:
         """
@@ -300,9 +455,9 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         pass
 
     @abstractmethod
-    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None) -> Any:
+    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
-        Send messages to the API client and return raw response texts.
+        Send messages to the API client and return the raw response.
 
         :param messages: A list of message dicts formatted for the API.
         :type messages: list[dict]
@@ -310,37 +465,59 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         :type max_new_tokens: int
         :param temperature: Sampling temperature. None means model default.
         :type temperature: Optional[float]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of sequences to return per prompt, if natively supported.
+        :type num_return_sequences: int
         :return: Response from API
         :rtype: Any
         """
         pass
 
     @abstractmethod
-    def get_output_texts(self, response: Any) -> str:
+    def get_output_texts(self, response: Any) -> list[str]:
         """
         Extract raw output text strings from a single model API response.
 
         :param response: The raw response object returned by the API client.
         :type response: Any
-        :return: output text strings.
-        :rtype: str
+        :return: List of output text strings, one per sequence in the response.
+        :rtype: list[str]
         """
         pass
 
+    def get_outputs(self, response: Any) -> list[str]:
+        """
+        Extract and post-process all output texts from a single API response.
+
+        :param response: The raw response object returned by the API client.
+        :type response: Any
+        :return: List of cleaned output strings, one per sequence.
+        :rtype: list[str]
+        """
+        return [self.get_output_final(t) for t in self.get_output_texts(response)]
+
     def get_output(self, response: Any) -> str:
         """
-        Extract and post-process the output text from a single API response.
-
-        Calls ``get_output_texts`` to extract the raw text, then applies
-        ``get_output_final`` to clean it.
+        Extract and post-process the first output text from a single API response.
 
         :param response: The raw response object returned by the API client.
         :type response: Any
         :return: Cleaned output string.
         :rtype: str
         """
-        output_text = self.get_output_texts(response)
-        return self.get_output_final(output_text)
+        return self.get_outputs(response)[0]
+
+    def infer_messages(
+        self,
+        messages: list[dict],
+        max_new_tokens: int,
+        temperature: Optional[float] = None,
+        stop_strings: list[str] = None,
+    ) -> str:
+        self.wait()
+        response = self.query_client(messages, max_new_tokens, temperature=temperature, stop_strings=stop_strings)
+        return self.get_output(response)
 
     def do_infer(
         self,
@@ -348,7 +525,9 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         images: list[list[Image.Image]],
         max_new_tokens: int,
         temperature: Optional[float] = None,
-    ) -> list[str]:
+        stop_strings: list[str] = None,
+        num_return_sequences: int = 1,
+    ) -> list[list[str]]:
         """
         Encodes all images to base64, constructs API message dicts, enforces
         the rate limit, queries the client, and returns post-processed outputs.
@@ -361,38 +540,50 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         :type max_new_tokens: int
         :param temperature: Sampling temperature. None means model default.
         :type temperature: Optional[float]
-        :return: Post-processed output strings, one per sample.
-        :rtype: list[str]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of independent sequences to return per prompt.
+        :type num_return_sequences: int
+        :return: Post-processed output strings shaped ``[batch, num_return_sequences]``.
+        :rtype: list[list[str]]
         """
         if len(images[0]) != 0:
             all_images = []
             for img_list in images:
                 all_images.append(self.get_encoded_images(img_list))
             images = all_images
-        base_input_dict = {
-            "role": "user",
-            "content": [{"type": "text"}],
-        }
         inputs = []
         for text, img_list in zip(texts, images):
-            prompt_dict = base_input_dict.copy()
-            prompt_dict["content"][0]["text"] = text
+            content = [{"type": "text", "text": text}]
             for img in img_list:
-                prompt_dict["content"].append(self.get_image_input_dict(img))
-            inputs.append(prompt_dict)
+                content.append(self.get_image_input_dict(img))
+            inputs.append({"role": "user", "content": content})
+
+        if num_return_sequences > 1 and temperature is None:
+            log_error(
+                f"num_return_sequences={num_return_sequences} requires temperature to be set "
+                f"(got temperature=None); otherwise all sequences would be identical.",
+                parameters=self.parameters,
+            )
 
         self.wait()
-        responses = []
+        outputs = []
         for (
             input_message
         ) in (
             inputs
         ):  # there is no pricing advantage for batch_size > 1, so just do them sequentially to allow the caller of this function to pass lists of any size.
-            response = self.query_client([input_message], max_new_tokens, temperature=temperature)
-            responses.append(response)
-        outputs = []
-        for response in responses:
-            outputs.append(self.get_output(response))
+            if self.SUPPORTS_NATIVE_N:
+                response = self.query_client([input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences)
+                outputs.append(self.get_outputs(response))
+            else:
+                seq_outputs = []
+                for seq_idx in range(num_return_sequences):
+                    if seq_idx > 0:
+                        self.wait()
+                    response = self.query_client([input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings)
+                    seq_outputs.extend(self.get_outputs(response))
+                outputs.append(seq_outputs)
         return outputs
 
 
@@ -404,12 +595,14 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
     Suitable as a base for any service that exposes an OpenAI-compatible API.
     """
 
+    SUPPORTS_NATIVE_N: bool = True
+
     def __init__(
         self,
         model: str,
         base_url: str,
         api_key: Optional[str] = None,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
@@ -422,7 +615,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
         :param api_key: The API key for authentication. If None, uses environment variables.
         :type api_key: str or None
         :param max_queries_per_minute: Maximum number of queries allowed per minute.
-        :type max_queries_per_minute: int
+        :type max_queries_per_minute: Optional[int]
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
@@ -448,7 +641,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
             "image_url": {"url": f"data:image/jpeg;base64,{image}"},
         }
 
-    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None) -> Any:
+    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
         Send a message to the OpenAI chat completions endpoint.
 
@@ -458,47 +651,59 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
         :type max_new_tokens: int
         :param temperature: Sampling temperature. None means model default.
         :type temperature: Optional[float]
+        :param stop_strings: Additional stop strings. ``"[STOP]"`` is always included.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Number of sequences to return per prompt.
+        :type num_return_sequences: int
         :return: The raw API response object.
         :rtype: Any
         """
-        kwargs = dict(model=self.model, messages=messages, max_tokens=max_new_tokens)
+        final_stop = list(dict.fromkeys(["[STOP]"] + (stop_strings or [])))
+        kwargs = dict(model=self.model, messages=messages, max_tokens=max_new_tokens, stop=final_stop, n=num_return_sequences)
         if temperature is not None:
             kwargs["temperature"] = temperature
         max_tries = 3
+        last_error = None
         for attempt in range(max_tries):
             try:
                 response = self.client.chat.completions.create(**kwargs)
+                if response is None or not getattr(response, "choices", None):
+                    raise ValueError(f"API returned an invalid response (None/missing/empty choices): {response}")
                 return response
             except Exception as e:
+                last_error = e
                 log_warn(f"OpenAI API call failed on attempt {attempt+1}/{max_tries} with error: {e}")
                 if attempt < max_tries - 1:
                     # exponential backoff with time_to_wait between attempts
                     backoff_time = self.seconds_to_wait * (2 ** attempt)
                     log_info(f"Waiting for {backoff_time:.2f} seconds before retrying...")
                     sleep(backoff_time)
-        log_error(f"OpenAI API call failed after {max_tries} attempts. Last error: {e}")
+        raise RuntimeError(f"OpenAI API call failed after {max_tries} attempts. Last error: {last_error}") from last_error
 
-    def get_output_texts(self, response: Any) -> str:
+    def get_output_texts(self, response: Any) -> list[str]:
         """
-        Extract the output text string from an OpenAI API response.
+        Extract output text strings from an OpenAI API response (one per choice).
 
         :param response: The raw response object from the OpenAI client.
         :type response: Any
-        :return: The output text string.
-        :rtype: str
+        :return: List of output text strings, one per choice.
+        :rtype: list[str]
         """
-        text = ""
-        message = response.choices[0].message
-        if hasattr(message, "reasoning") and message.reasoning is not None:
-            text = "Reasoning: " + message.reasoning
-        content = response.choices[0].message.content
-        if content is not None:
-            if text != "":
-                text += "\nResponse: "
-            text = text + " " + content
-        if text.strip() == "":
-            log_warn(f"Received empty output text from model: {response}")
-        return text.strip()
+        texts = []
+        for choice in response.choices:
+            text = ""
+            message = choice.message
+            if hasattr(message, "reasoning") and message.reasoning is not None:
+                text = "Reasoning: " + message.reasoning
+            content = message.content
+            if content is not None:
+                if text != "":
+                    text += "\nResponse: "
+                text = text + " " + content
+            if text.strip() == "":
+                log_warn(f"Received empty output text from model for choice: {choice}")
+            texts.append(text.strip())
+        return texts
 
 
 class OpenAIModel(OpenAIAPIModel):
@@ -512,7 +717,7 @@ class OpenAIModel(OpenAIAPIModel):
         self,
         model: str,
         api_key: Optional[str] = None,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
@@ -523,7 +728,7 @@ class OpenAIModel(OpenAIAPIModel):
         :param api_key: The OpenAI API key. If None, uses the ``OPENAI_API_KEY`` environment variable.
         :type api_key: str or None
         :param max_queries_per_minute: Maximum number of queries allowed per minute.
-        :type max_queries_per_minute: int
+        :type max_queries_per_minute: Optional[int]
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
@@ -538,28 +743,25 @@ class OpenAIModel(OpenAIAPIModel):
 
 class AnthropicModel(APIModel):
     """
-    Anthropic API model (stub — not yet implemented).
-
-    The client is currently uninitialized. Implement ``get_image_input_dict``,
-    ``query_client``, and ``get_output_texts`` using the Anthropic SDK before use.
+    APIModel implementation backed by the Anthropic Messages API.
     """
 
     def __init__(
         self,
         model: str,
         api_key: Optional[str] = None,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
-        Initialize the Anthropic model stub.
+        Initialize the Anthropic model.
 
         :param model: The Anthropic model identifier (e.g. ``"claude-opus-4-6"``).
         :type model: str
         :param api_key: The Anthropic API key. If None, uses the ``ANTHROPIC_API_KEY`` environment variable.
         :type api_key: str or None
         :param max_queries_per_minute: Maximum number of queries allowed per minute.
-        :type max_queries_per_minute: int
+        :type max_queries_per_minute: Optional[int]
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
@@ -588,7 +790,7 @@ class AnthropicModel(APIModel):
             },
         }
 
-    def query_client(self, messages: list[dict], max_new_tokens: int) -> Any:
+    def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
         Send a message to the Anthropic messages endpoint.
 
@@ -596,28 +798,59 @@ class AnthropicModel(APIModel):
         :type messages: list[dict]
         :param max_new_tokens: Maximum number of tokens to generate.
         :type max_new_tokens: int
+        :param temperature: Sampling temperature. None means model default.
+        :type temperature: Optional[float]
+        :param stop_strings: Additional stop sequences passed through to the API.
+        :type stop_strings: list[str] or None
+        :param num_return_sequences: Unused (Anthropic has no native multi-sample API); kept for signature compatibility.
+        :type num_return_sequences: int
         :return: The raw API response object.
         :rtype: Any
         """
-        response = self.client.messages.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_new_tokens,
-        )
-        return response
+        kwargs = dict(model=self.model, messages=messages, max_tokens=max_new_tokens)
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if stop_strings:
+            kwargs["stop_sequences"] = stop_strings
+        max_tries = 3
+        last_error = None
+        for attempt in range(max_tries):
+            try:
+                response = self.client.messages.create(**kwargs)
+                if response is None or not getattr(response, "content", None):
+                    raise ValueError(f"API returned an invalid response (None/missing/empty content): {response}")
+                return response
+            except Exception as e:
+                last_error = e
+                log_warn(f"Anthropic API call failed on attempt {attempt+1}/{max_tries} with error: {e}")
+                if attempt < max_tries - 1:
+                    # exponential backoff with time_to_wait between attempts
+                    backoff_time = self.seconds_to_wait * (2 ** attempt)
+                    log_info(f"Waiting for {backoff_time:.2f} seconds before retrying...")
+                    sleep(backoff_time)
+        raise RuntimeError(f"Anthropic API call failed after {max_tries} attempts. Last error: {last_error}") from last_error
 
-    def get_output_texts(self, response: Any) -> str:
-        return response.content[0].text
+    def get_output_texts(self, response: Any) -> list[str]:
+        """
+        Extract the output text string from an Anthropic API response.
+
+        :param response: The raw response object from the Anthropic client.
+        :type response: Any
+        :return: A single-element list containing the output text string.
+        :rtype: list[str]
+        """
+        text = response.content[0].text
+        if text.strip() == "":
+            log_warn(f"Received empty output text from model: {response}")
+        return [text.strip()]
 
 
 class vLLMModel(OpenAIAPIModel):
     """
     Model served via vLLM using an OpenAI-compatible API.
 
-    Uses the OpenAI client pointed at a local or remote vLLM server.
-
-    .. note::
-        The default base URL is not yet configured. Set ``base_url`` before use.
+    Uses the OpenAI client pointed at a local or remote vLLM server. The base
+    URL is read from ``parameters["vLLM_base_url"]``.
     """
 
     def __init__(
@@ -656,12 +889,17 @@ class OpenRouterModel(OpenAIAPIModel):
 
     Routes requests to various model providers (OpenAI, Anthropic, Mistral, etc.)
     via a single OpenAI-compatible endpoint at ``https://openrouter.ai/api/v1``.
+    The API key is read from the ``OPENROUTER_API_KEY`` environment variable.
     """
+
+    # OpenRouter does not reliably forward `n` to the underlying provider, so
+    # multiple sequences are obtained via separate sequential calls instead.
+    SUPPORTS_NATIVE_N: bool = False
 
     def __init__(
         self,
         model: str,
-        max_queries_per_minute: int = 60,
+        max_queries_per_minute: Optional[int] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
@@ -669,10 +907,8 @@ class OpenRouterModel(OpenAIAPIModel):
 
         :param model: The OpenRouter model identifier (e.g. ``"openai/gpt-4o"``).
         :type model: str
-        :param api_key: The OpenRouter API key.
-        :type api_key: str or None
         :param max_queries_per_minute: Maximum number of queries allowed per minute.
-        :type max_queries_per_minute: int
+        :type max_queries_per_minute: Optional[int]
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
@@ -711,37 +947,7 @@ def get_inputs(model_kind, processor, messages):
         raise NotImplementedError
 
 
-class HuggingFaceModelBase(ABC):
-    """
-    Abstract base for all HuggingFace model wrappers (inference and embedding).
-
-    Manages registration in the shared ``HUGGINGFACE_MODEL_MAPPING`` store,
-    tracks model kwargs, and marks instances as defunct when the underlying
-    model is evicted from GPU memory.
-    """
-
-    def _init_store(self, *, model: str, parameters, model_kwargs: dict, load_fn) -> None:
-        """Register this instance in the shared store, loading the model if needed."""
-        self.model = model
-        self.parameters = load_parameters(parameters)
-        self.model_kwargs = model_kwargs
-        self.is_defunct = False
-        if model in HUGGINGFACE_MODEL_MAPPING:
-            existing_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
-            if existing_kwargs != model_kwargs:
-                log_warn(
-                    f"Model {model} already loaded with different kwargs. "
-                    f"Passed: {model_kwargs}, loaded: {existing_kwargs}. Reloading. "
-                    "Existing instances of this model will be marked defunct."
-                )
-                remove_from_model_store(model)
-                load_fn(model_name=model, model_kwargs=model_kwargs)
-        else:
-            load_fn(model_name=model, model_kwargs=model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
-
-
-class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
+class HuggingFaceModel(InferenceModel):
     def __init__(
         self,
         model: str,
@@ -749,17 +955,26 @@ class HuggingFaceModel(HuggingFaceModelBase, InferenceModel):
         parameters: dict[str, Any] = None,
         **model_kwargs,
     ) -> None:
+        self.model = model
         if model_kind is None:
             model_kind = infer_model_kind(model, error_out=True)
         self.model_kind = model_kind
-        self._init_store(
-            model=model,
-            parameters=parameters,
-            model_kwargs=model_kwargs,
-            load_fn=lambda *, model_name, model_kwargs: load_model_into_store(model_name, model_kind, model_kwargs),
-        )
+        self.model_kwargs = model_kwargs
+        self.parameters = parameters
+        self.is_defunct = False
+        if model in HUGGINGFACE_MODEL_MAPPING:
+            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
+            if used_kwargs != model_kwargs:
+                log_warn(
+                    f"Model {model} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
+                )
+                remove_from_huggingface_model_store(model)
+                load_model_into_store(model, model_kind, model_kwargs)
+        else:
+            load_model_into_store(model, model_kind, model_kwargs)
+        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
 
-def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
+    def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
         if self.model_kind in VLM_MODELS:
             content = [{"type": "text", "text": text}]
             for img in images:
@@ -768,14 +983,44 @@ def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
             content = text
         return [{"role": "user", "content": content}]
 
-    
+    def _generate(self, messages: list[list[dict]], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1):
+        processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
+        model = HUGGINGFACE_MODEL_MAPPING[self.model].model
+        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
+        tokenizer = None
+        if hasattr(processor, "tokenizer"):
+            tokenizer = processor.tokenizer
+        else:
+            tokenizer = processor
+        start_index = inputs["input_ids"].shape[1]
+        do_sample = temperature is not None and temperature > 0
+        final_stop_strings = list(dict.fromkeys(["[STOP]"] + (stop_strings or [])))
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            top_p=None,
+            temperature=temperature if do_sample else None,
+            top_k=None,
+            repetition_penalty=1.2,
+            stop_strings=final_stop_strings,
+            pad_token_id=tokenizer.eos_token_id,
+            tokenizer=tokenizer,
+            num_return_sequences=num_return_sequences,
+        )
+        output_only = outputs[:, start_index:]
+        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
+        return [self.get_output_final(text.lstrip("assistant").strip()) for text in output_texts]
+
     def do_infer(
         self,
         texts: list[str],
         images: list[list[Image.Image]],
         max_new_tokens: int,
         temperature: Optional[float] = None,
-    ) -> list[str]:
+        stop_strings: list[str] = None,
+        num_return_sequences: int = 1,
+    ) -> list[list[str]]:
         if self.is_defunct:
             log_error(
                 f"Cannot run inference on defunct model.",
@@ -789,76 +1034,106 @@ def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
             self.get_single_message_list(text, img_list)
             for text, img_list in zip(texts, images)
         ]
-        processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
-        model = HUGGINGFACE_MODEL_MAPPING[self.model].model
-        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
-        tokenizer = None
-        if hasattr(processor, "tokenizer"):
-            tokenizer = processor.tokenizer
-        else:
-            tokenizer = processor
-        start_index = inputs["input_ids"].shape[1]
-        do_sample = temperature is not None and temperature > 0
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            top_p=None,
-            temperature=temperature if do_sample else None,
-            top_k=None,
-            repetition_penalty=1.2,
-            stop_strings=["[STOP]"],
-            pad_token_id=tokenizer.eos_token_id,
-            tokenizer=tokenizer,
+        flat_texts = self._generate(
+            messages,
+            max_new_tokens,
+            temperature=temperature,
+            stop_strings=stop_strings,
+            num_return_sequences=num_return_sequences,
         )
-        output_only = outputs[:, start_index:]
-        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
-        final_texts = []
-        for text in output_texts:
-            final_texts.append(text.lstrip("assistant").strip())
+        batch_size = len(texts)
+        final_texts = [[] for _ in range(batch_size)]
+        for i, text in enumerate(flat_texts):
+            final_texts[i // num_return_sequences].append(text)
         return final_texts
+
+    def infer_messages(
+        self,
+        messages: list[dict],
+        max_new_tokens: int,
+        temperature: Optional[float] = None,
+        stop_strings: list[str] = None,
+    ) -> str:
+        if self.is_defunct:
+            log_error(
+                f"Cannot run inference on defunct model.",
+                parameters=self.parameters,
+            )
+        return self._generate([messages], max_new_tokens, temperature=temperature, stop_strings=stop_strings)[0]
 
 
 @dataclass
 class HuggingFaceModelStore:
     model: PreTrainedModel
     processor: PreTrainedTokenizerBase | Any  # tokenizers are PreTrainedTokenizerBase; processors (e.g. AutoProcessor) have no common base
-    model_kwargs: dict[str, Any]
-    users: list["HuggingFaceModelBase"] = field(default_factory=list)
+    model_kwargs: dict[str, Any]  # the kwargs the model was initialised with
+    users: list["HuggingFaceModel"] = field(
+        default_factory=list
+    )  # all HuggingFaceModel instances currently using this model.
 
 
-# Single shared store for all HuggingFace model wrappers (inference and embedding).
+# Stores all HuggingFace models loaded into GPU. Allows different instantiations
+# of HuggingFaceModel to reuse a loaded model without reloading it every time.
 HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
 
 
-def set_users_defunct(model_name: str) -> None:
-    if model_name in HUGGINGFACE_MODEL_MAPPING:
-        for user in HUGGINGFACE_MODEL_MAPPING[model_name].users:
+def set_users_defunct(model: str) -> None:
+    """
+    Mark all HuggingFaceModel instances using the given model name as defunct.
+
+    This should be called before removing a model from the store to prevent
+    future inference calls on HuggingFaceModel instances that rely on the removed model.
+
+    :param model: The name of the model whose users should be marked defunct.
+    :type model: str
+    """
+    if model in HUGGINGFACE_MODEL_MAPPING:
+        for user in HUGGINGFACE_MODEL_MAPPING[model].users:
             user.is_defunct = True
     else:
-        log_warn(f"Model {model_name} not found in store. Cannot set users defunct.")
+        log_warn(
+            f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
+        )
 
 
-def remove_from_model_store(model_name: str, verbose: bool = False) -> None:
-    """Remove a model from the store and free its GPU memory."""
-    if model_name in HUGGINGFACE_MODEL_MAPPING:
+def remove_from_huggingface_model_store(model: str, verbose=False) -> None:
+    """
+    Remove a model from the HuggingFace model store and free its GPU memory.
+
+    Zeros out all parameter tensors in-place on the GPU (avoiding a CPU transfer),
+    then forces Python GC and flushes PyTorch's CUDA cache.
+    Does nothing if ``model`` is not in the store.
+
+    :param model: The name of the model to remove.
+    :type model: str
+    :param verbose: If True, logs removal and missing-key warnings.
+    :type verbose: bool
+    """
+    if model in HUGGINGFACE_MODEL_MAPPING:
         if verbose:
-            log_info(f"Removing {model_name} from store and clearing from GPU.")
-        set_users_defunct(model_name)
-        store = HUGGINGFACE_MODEL_MAPPING.pop(model_name)
+            log_info(
+                f"Removing {model} from HuggingFace model store and clearing from GPU."
+            )
+        set_users_defunct(model)
+        store = HUGGINGFACE_MODEL_MAPPING.pop(model)
         for param in store.model.parameters():
             param.data = torch.empty(0, device=param.device)
         del store
         gc.collect()
         torch.cuda.empty_cache()
-    elif verbose:
-        log_warn(f"Model {model_name} not found in store. Cannot remove.")
+    else:
+        if verbose:
+            log_warn(
+                f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
+            )
 
 
-def clear_model_store() -> None:
-    """Remove all models from the store and free their GPU memory."""
-    for model_name in list(HUGGINGFACE_MODEL_MAPPING.keys()):
-        remove_from_model_store(model_name)
+def clear_huggingface_model_store() -> None:
+    """
+    Remove all models from the HuggingFace model store and free their GPU memory.
+    """
+    for model in list(HUGGINGFACE_MODEL_MAPPING.keys()):
+        remove_from_huggingface_model_store(model)
 
 
 def load_special_model(model, model_kind, model_kwargs):
@@ -866,7 +1141,8 @@ def load_special_model(model, model_kind, model_kwargs):
 
 
 def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
-    remove_from_model_store(model_name, verbose=False)
+    remove_from_huggingface_model_store(model_name, verbose=False)
+    model_kwargs.setdefault("torch_dtype", "auto")
     log_info(
         f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}"
     )
@@ -910,7 +1186,8 @@ def infer_model_kind(model: str, error_out: bool = False) -> Optional[str]:
         )
     return None
 
-def model_factory(*, model_name: str, model_kind: str, model_engine: str, parameters: dict=None, **model_kwargs) -> InferenceModel:
+
+def model_factory(*, model_name: str, model_kind: str, model_engine: str, parameters: dict = None, **model_kwargs) -> InferenceModel:
     """
     Factory function to create an inference model instance based on the specified kind and engine.
 
@@ -939,4 +1216,4 @@ def model_factory(*, model_name: str, model_kind: str, model_engine: str, parame
     elif model_engine == "vLLM":
         return vLLMModel(model=model_name, parameters=parameters, **model_kwargs)
     else:
-        log_error(f"model_engine {model_engine} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters) 
+        log_error(f"model_engine {model_engine} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters)
