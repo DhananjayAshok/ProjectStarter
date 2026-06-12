@@ -11,18 +11,57 @@ from PIL import Image
 import base64
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from transformers import (
-    AutoTokenizer,
-    AutoProcessor,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-)
-import torch
-import gc
 import uuid
+
+
+def parse_key_value(text: str, key: str) -> Optional[str]:
+    """
+    Return the value following ``"Key:"`` on the matching line of ``text``.
+
+    The key is matched case-insensitively; the returned value preserves its
+    original case. A trailing ``[STOP]``/``[stop]`` marker is stripped.
+
+    If ``text`` contains exactly one ``"response:"`` occurrence, only the text
+    after it is searched (avoids matching mentions of ``key`` in a preceding
+    "Reasoning:" section). If no ``"key:"`` line is found but ``key`` (without
+    a colon) appears exactly once, the rest of that occurrence's line is
+    returned instead.
+
+    :param text: The text to search.
+    :type text: str
+    :param key: The key to search for.
+    :type key: str
+    :return: The extracted value, or None if not found or empty.
+    :rtype: Optional[str]
+    """
+    key_lower = key.lower()
+    marker = f"{key_lower}:"
+
+    def clean(value: str) -> Optional[str]:
+        value = value.strip()
+        stop_idx = value.lower().find("[stop]")
+        if stop_idx != -1:
+            value = value[:stop_idx]
+        value = value.strip()
+        return value or None
+
+    text_lower = text.lower()
+    if text_lower.count("response:") == 1: # sometimes API models do this. 
+        idx = text_lower.index("response:") + len("response:")
+        text = text[idx:].strip()
+        text_lower = text.lower()
+
+    for line, line_lower in zip(text.splitlines(), text_lower.splitlines()):
+        idx = line_lower.find(marker)
+        if idx != -1:
+            return clean(line[idx + len(marker):])
+
+    if text_lower.count(key_lower) == 1:
+        idx = text_lower.index(key_lower)
+        rest_of_line = text[idx + len(key):].splitlines()
+        return clean(rest_of_line[0]) if rest_of_line else None
+
+    return None
 
 MIN_QUERIES_PER_MINUTE = 1
 
@@ -69,7 +108,7 @@ def get_max_queries_per_minute(model: str, parameters: dict[str, Any]) -> int:
     else:
         if len(matches) > 1:
             for match in matches:
-                if match == model:
+                if match == model.split("/")[-1]:
                     return _RATE_LIMITS[match]
             log_error(
                 f"Multiple matches found in _RATE_LIMITS for model {model}: {matches}. "
@@ -309,6 +348,8 @@ class InferenceModel(ABC):
         texts, images, passed_in_str = self._standardize_format(texts, images)
         parameters = self.parameters if hasattr(self, "parameters") else load_parameters()
         if batch_size is None:
+            from utils.huggingface_inference import HuggingFaceModel
+
             if isinstance(self, vLLMModel):
                 batch_size = parameters["max_batch_size_vllm"]
             elif isinstance(self, HuggingFaceModel):
@@ -1074,303 +1115,3 @@ class OpenRouterModel(OpenAIAPIModel):
             parameters=parameters,
         )
 
-
-SPECIAL_MODEL_KINDS = ["lm", "vlm"]
-VLM_MODELS = ["vlm"]
-
-for model in VLM_MODELS:
-    if model not in SPECIAL_MODEL_KINDS:
-        log_error(
-            f"Model {model} is in VLM_MODELS but not in SPECIAL_MODEL_KINDS. Please add it to SPECIAL_MODEL_KINDS."
-        )
-
-
-def get_inputs(model_kind, processor, messages):
-    if model_kind in ["lm", "vlm"]:
-        inputs = processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            padding=True,
-            return_dict=True,
-            return_tensors="pt",
-        )
-        return inputs
-    else:
-        raise NotImplementedError
-
-
-class HuggingFaceModel(InferenceModel):
-    def __init__(
-        self,
-        model: str,
-        model_kind: str = None,
-        parameters: dict[str, Any] = None,
-        **model_kwargs,
-    ) -> None:
-        self.model = model
-        if model_kind is None:
-            model_kind = infer_model_kind(model, error_out=True)
-        self.model_kind = model_kind
-        self.model_kwargs = model_kwargs
-        self.parameters = parameters
-        self.is_defunct = False
-        if model in HUGGINGFACE_MODEL_MAPPING:
-            used_kwargs = HUGGINGFACE_MODEL_MAPPING[model].model_kwargs
-            if used_kwargs != model_kwargs:
-                log_warn(
-                    f"Model {model} already loaded with different kwargs. Passed kwargs: {model_kwargs}, loaded kwargs: {used_kwargs}. Reloading model with new kwargs. This will make existing HuggingFaceModel instances using this model defunct."
-                )
-                remove_from_huggingface_model_store(model)
-                load_model_into_store(model, model_kind, model_kwargs)
-        else:
-            load_model_into_store(model, model_kind, model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model].users.append(self)
-
-    def get_single_message_list(self, text: str, images: list[Image.Image]) -> dict:
-        if self.model_kind in VLM_MODELS:
-            content = [{"type": "text", "text": text}]
-            for img in images:
-                content.append({"type": "image", "image": img})
-        else:
-            content = text
-        return [{"role": "user", "content": content}]
-
-    def _generate(self, messages: list[list[dict]], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1):
-        processor = HUGGINGFACE_MODEL_MAPPING[self.model].processor
-        model = HUGGINGFACE_MODEL_MAPPING[self.model].model
-        inputs = get_inputs(self.model_kind, processor, messages).to(model.device)
-        tokenizer = None
-        if hasattr(processor, "tokenizer"):
-            tokenizer = processor.tokenizer
-        else:
-            tokenizer = processor
-        start_index = inputs["input_ids"].shape[1]
-        do_sample = temperature is not None and temperature > 0
-        final_stop_strings = list(dict.fromkeys(["[STOP]"] + (stop_strings or [])))
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            top_p=None,
-            temperature=temperature if do_sample else None,
-            top_k=None,
-            repetition_penalty=1.2,
-            stop_strings=final_stop_strings,
-            pad_token_id=tokenizer.eos_token_id,
-            tokenizer=tokenizer,
-            num_return_sequences=num_return_sequences,
-        )
-        output_only = outputs[:, start_index:]
-        output_texts = processor.batch_decode(output_only, skip_special_tokens=True)
-        return [self.get_output_final(text.lstrip("assistant").strip()) for text in output_texts]
-
-    def do_infer(
-        self,
-        texts: list[str],
-        images: list[list[Image.Image]],
-        max_new_tokens: int,
-        temperature: Optional[float] = None,
-        stop_strings: list[str] = None,
-        num_return_sequences: int = 1,
-    ) -> list[list[str]]:
-        if self.is_defunct:
-            log_error(
-                f"Cannot run inference on defunct model.",
-                parameters=self.parameters,
-            )
-        if len(images[0]) != 0 and self.model_kind not in VLM_MODELS:
-            log_error(
-                f"Model {self.model} of kind {self.model_kind} cannot handle image inputs."
-            )
-        messages = [
-            self.get_single_message_list(text, img_list)
-            for text, img_list in zip(texts, images)
-        ]
-        flat_texts = self._generate(
-            messages,
-            max_new_tokens,
-            temperature=temperature,
-            stop_strings=stop_strings,
-            num_return_sequences=num_return_sequences,
-        )
-        batch_size = len(texts)
-        final_texts = [[] for _ in range(batch_size)]
-        for i, text in enumerate(flat_texts):
-            final_texts[i // num_return_sequences].append(text)
-        return final_texts
-
-    def infer_messages(
-        self,
-        messages: list[dict],
-        max_new_tokens: int,
-        temperature: Optional[float] = None,
-        stop_strings: list[str] = None,
-        num_return_sequences: int = 1,
-    ) -> Union[str, list[str]]:
-        if self.is_defunct:
-            log_error(
-                f"Cannot run inference on defunct model.",
-                parameters=self.parameters,
-            )
-        outputs = self._generate([messages], max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences)
-        if num_return_sequences == 1:
-            return outputs[0]
-        return outputs
-
-
-@dataclass
-class HuggingFaceModelStore:
-    model: PreTrainedModel
-    processor: PreTrainedTokenizerBase | Any  # tokenizers are PreTrainedTokenizerBase; processors (e.g. AutoProcessor) have no common base
-    model_kwargs: dict[str, Any]  # the kwargs the model was initialised with
-    users: list["HuggingFaceModel"] = field(
-        default_factory=list
-    )  # all HuggingFaceModel instances currently using this model.
-
-
-# Stores all HuggingFace models loaded into GPU. Allows different instantiations
-# of HuggingFaceModel to reuse a loaded model without reloading it every time.
-HUGGINGFACE_MODEL_MAPPING: dict[str, HuggingFaceModelStore] = {}
-
-
-def set_users_defunct(model: str) -> None:
-    """
-    Mark all HuggingFaceModel instances using the given model name as defunct.
-
-    This should be called before removing a model from the store to prevent
-    future inference calls on HuggingFaceModel instances that rely on the removed model.
-
-    :param model: The name of the model whose users should be marked defunct.
-    :type model: str
-    """
-    if model in HUGGINGFACE_MODEL_MAPPING:
-        for user in HUGGINGFACE_MODEL_MAPPING[model].users:
-            user.is_defunct = True
-    else:
-        log_warn(
-            f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot set users defunct."
-        )
-
-
-def remove_from_huggingface_model_store(model: str, verbose=False) -> None:
-    """
-    Remove a model from the HuggingFace model store and free its GPU memory.
-
-    Zeros out all parameter tensors in-place on the GPU (avoiding a CPU transfer),
-    then forces Python GC and flushes PyTorch's CUDA cache.
-    Does nothing if ``model`` is not in the store.
-
-    :param model: The name of the model to remove.
-    :type model: str
-    :param verbose: If True, logs removal and missing-key warnings.
-    :type verbose: bool
-    """
-    if model in HUGGINGFACE_MODEL_MAPPING:
-        if verbose:
-            log_info(
-                f"Removing {model} from HuggingFace model store and clearing from GPU."
-            )
-        set_users_defunct(model)
-        store = HUGGINGFACE_MODEL_MAPPING.pop(model)
-        for param in store.model.parameters():
-            param.data = torch.empty(0, device=param.device)
-        del store
-        gc.collect()
-        torch.cuda.empty_cache()
-    else:
-        if verbose:
-            log_warn(
-                f"Model {model} not found in HuggingFace model store with keys: {HUGGINGFACE_MODEL_MAPPING.keys()}. Cannot remove."
-            )
-
-
-def clear_huggingface_model_store() -> None:
-    """
-    Remove all models from the HuggingFace model store and free their GPU memory.
-    """
-    for model in list(HUGGINGFACE_MODEL_MAPPING.keys()):
-        remove_from_huggingface_model_store(model)
-
-
-def load_special_model(model, model_kind, model_kwargs):
-    raise NotImplementedError
-
-
-def load_model_into_store(model_name, model_kind, model_kwargs) -> None:
-    remove_from_huggingface_model_store(model_name, verbose=False)
-    model_kwargs.setdefault("torch_dtype", "auto")
-    log_info(
-        f"Loading model {model_name} of kind {model_kind} into HuggingFace model store with kwargs {model_kwargs}"
-    )
-    if model_kind == "lm":
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name, device_map="auto", trust_remote_code=True, **model_kwargs
-        )
-        processor = AutoTokenizer.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
-        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs
-        )
-    elif model_kind == "vlm":
-        model = AutoModelForImageTextToText.from_pretrained(
-            model_name, device_map="auto", trust_remote_code=True, **model_kwargs
-        )
-        processor = AutoProcessor.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
-        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs
-        )
-    elif model_kind in SPECIAL_MODEL_KINDS:
-        model, processor = load_special_model(model_name, model_kind, model_kwargs)
-        HUGGINGFACE_MODEL_MAPPING[model_name] = HuggingFaceModelStore(
-            model=model, processor=processor, model_kwargs=model_kwargs
-        )
-    else:
-        log_error(
-            f"Model class {model_kind} not recognised. Cannot load model {model_name} into store."
-        )
-
-
-def infer_model_kind(model: str, error_out: bool = False) -> Optional[str]:
-    special_inclusions = []
-    for special_class in SPECIAL_MODEL_KINDS:
-        if special_class.lower() in model.lower():
-            special_inclusions.append(special_class)
-    if len(special_inclusions) == 1:
-        return special_inclusions[0]
-    if error_out:
-        log_error(
-            f"Could not infer model class for {model}. Specify `model_kind` as one of: {SPECIAL_MODEL_KINDS}"
-        )
-    return None
-
-
-def model_factory(*, model_name: str, model_kind: str, model_engine: str, parameters: dict = None, **model_kwargs) -> InferenceModel:
-    """
-    Factory function to create an inference model instance based on the specified kind and engine.
-
-    :param model_name: The identifier for the model to load (e.g. "gpt-4o", "mistral-vlm-1b").
-    :type model_name: str
-    :param model_kind: The kind of model to create ("lm" for language models, "vlm" for vision-language models, etc.).
-    :type model_kind: str
-    :param model_engine: The engine or API to use for the model ("openai", "anthropic", "huggingface", "openrouter", "vLLM", etc.).
-    :type model_engine: str
-    :param parameters: Loaded parameters dict. If None, loads from config.
-    :type parameters: dict[str, Any] or None
-    :param model_kwargs: Additional keyword arguments to pass to the model constructor.
-    :type model_kwargs: dict
-    :return: An instance of a subclass of InferenceModel corresponding to the specified kind and engine.
-    :rtype: InferenceModel
-    """
-    parameters = load_parameters(parameters)
-    if model_engine == "huggingface":
-        return HuggingFaceModel(model=model_name, model_kind=model_kind, parameters=parameters, **model_kwargs)
-    elif model_engine == "openai":
-        return OpenAIModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_engine == "anthropic":
-        return AnthropicModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_engine == "openrouter":
-        return OpenRouterModel(model=model_name, parameters=parameters, **model_kwargs)
-    elif model_engine == "vLLM":
-        return vLLMModel(model=model_name, parameters=parameters, **model_kwargs)
-    else:
-        log_error(f"model_engine {model_engine} not recognised. Must be one of 'huggingface', 'openai', 'anthropic', 'vLLM', or 'openrouter'.", parameters=parameters)
