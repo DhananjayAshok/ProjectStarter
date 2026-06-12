@@ -1054,6 +1054,7 @@ class vLLMModel(OpenAIAPIModel):
         self,
         model: str,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         parameters: dict[str, Any] = None,
     ) -> None:
         """
@@ -1063,11 +1064,14 @@ class vLLMModel(OpenAIAPIModel):
         :type model: str
         :param api_key: The API key for the vLLM server, if required.
         :type api_key: str or None
+        :param base_url: The base url at which the endpoint is accessible, if not default.
+        :type base_url: str
         :param parameters: Loaded parameters dict. If None, loads from config.
         :type parameters: dict[str, Any] or None
         """
         parameters = load_parameters(parameters)
-        base_url = parameters["vLLM_base_url"]
+        if base_url is None:
+            base_url = parameters["vLLM_base_url"]
         super().__init__(
             model=model,
             base_url=base_url,
