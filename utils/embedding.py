@@ -1,5 +1,7 @@
 from typing import Optional, Any, Union
 from abc import ABC, abstractmethod
+import asyncio
+import random
 import torch
 import torch.nn.functional as F
 import os
@@ -10,6 +12,8 @@ from utils.log_handling import log_info, log_warn, log_error
 from utils.lm_inference import (
     RateLimitedAPIBase,
     OpenAICompatibleAPIBase,
+)
+from utils.huggingface_inference import (
     HuggingFaceModelBase,
     HuggingFaceModelStore,
     HUGGINGFACE_MODEL_MAPPING,
@@ -264,9 +268,9 @@ class APITextEmbeddingModel(RateLimitedAPIBase, TextEmbeddingModel, ABC):
         )
 
     @abstractmethod
-    def query_embedding_client(self, *, texts: list[str]) -> list[list[float]]:
+    async def query_client(self, *, texts: list[str]) -> list[list[float]]:
         """
-        Send texts to the embedding API and return raw embedding vectors.
+        Send texts to the embedding API and return raw embedding vectors (asynchronously).
 
         :param texts: List of strings to embed.
         :return: List of embedding vectors (each a list of floats), in input order.
@@ -274,9 +278,25 @@ class APITextEmbeddingModel(RateLimitedAPIBase, TextEmbeddingModel, ABC):
         """
         pass
 
-    def do_embed_text(self, *, texts: list[str], normalize: bool) -> torch.Tensor:
+    async def _embed_async(self, texts: list[str], batch_size: int) -> list[list[float]]:
+        """
+        Issue one query per batch of ``batch_size`` texts concurrently.
+
+        A single ``self.wait()`` paces the start of this call relative to the last
+        request issued; all batches are then fired concurrently. Per-request
+        rate-limit errors are handled by ``query_client``'s retry/backoff.
+        """
         self.wait()
-        raw = self.query_embedding_client(texts=texts)
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+        results = await asyncio.gather(*(self.query_client(texts=batch) for batch in batches))
+        flat: list[list[float]] = []
+        for batch_result in results:
+            flat.extend(batch_result)
+        return flat
+
+    def do_embed_text(self, *, texts: list[str], normalize: bool) -> torch.Tensor:
+        batch_size = self.parameters["max_batch_size_api"]
+        raw = asyncio.run(self._embed_async(texts, batch_size))
         embeddings = torch.tensor(raw, dtype=torch.float32)
         return maybe_normalize(embeddings, normalize)
 
@@ -303,10 +323,26 @@ class OpenAIAPITextEmbeddingModel(OpenAICompatibleAPIBase, APITextEmbeddingModel
             parameters=parameters,
         )
 
-    def query_embedding_client(self, *, texts: list[str]) -> list[list[float]]:
-        response = self.client.embeddings.create(model=self.model, input=texts, encoding_format="float")
-        # Sort by index to preserve input order regardless of API response ordering.
-        return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+    async def query_client(self, *, texts: list[str]) -> list[list[float]]:
+        max_tries = 3
+        last_error = None
+        for attempt in range(max_tries):
+            try:
+                response = await self.async_client.embeddings.create(model=self.model, input=texts, encoding_format="float")
+                if response is None or not getattr(response, "data", None):
+                    raise ValueError(f"API returned an invalid response (None/missing/empty data): {response}")
+                # Sort by index to preserve input order regardless of API response ordering.
+                return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+            except Exception as e:
+                last_error = e
+                log_warn(f"OpenAI embeddings API call failed on attempt {attempt+1}/{max_tries} with error: {e}")
+                if attempt < max_tries - 1:
+                    # exponential backoff with time_to_wait between attempts, plus jitter so
+                    # concurrent coroutines retrying after the same failure don't all collide
+                    backoff_time = self.seconds_to_wait * (2 ** attempt) * random.uniform(1.0, 1.5)
+                    log_info(f"Waiting for {backoff_time:.2f} seconds before retrying...")
+                    await asyncio.sleep(backoff_time)
+        raise RuntimeError(f"OpenAI embeddings API call failed after {max_tries} attempts. Last error: {last_error}") from last_error
 
 
 class OpenAITextEmbeddingModel(OpenAIAPITextEmbeddingModel):
