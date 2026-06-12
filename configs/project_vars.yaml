@@ -1,4 +1,5 @@
 random_seed: 42
+max_batch_size: 32 # The maximum batch size for LM inference. Can be overridden by individual calls to the LMInference class, but this is the default.
 default_max_queries_per_minute: 60 # Fallback rate limit (queries/minute) for API models whose name isn't in _RATE_LIMITS in utils/lm_inference.py
 results_dir: "results" # Path to the directory where results will be saved, meant for lightweight files, plots and logs
 figure_skip_show: False # Indicates whether the Plotter object should save a figure or display it. In envs with no display you'll want to set this to True
