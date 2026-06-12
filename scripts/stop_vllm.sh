@@ -1,40 +1,53 @@
 #!/bin/bash
 #
 # Usage:
-#   bash scripts/stop_vllm.sh
+#   bash scripts/stop_vllm.sh [PORT or --port PORT]
 #
 # Description:
-#   Gracefully shuts down the background vLLM server initiated by serve_vllm.sh.
-#   It reads the process ID from 'vllm.pid', issues a SIGTERM to allow proper 
-#   VRAM release, and monitors the exit. Falls back to a hard SIGKILL if the 
-#   grace period expires.
+#   Gracefully shuts down the background vLLM server running on a specific port.
+#   Falls back to a hard SIGKILL if the grace period expires.
 #
-# Inputs:
-#   vllm.pid         - Expected file containing the target process ID.
+# Examples:
+#   bash scripts/stop_vllm.sh 8000
+#   bash scripts/stop_vllm.sh --port 8001
 #
 
 # Configuration
-TIMEOUT=15  # Max seconds to wait for a graceful shutdown
-PID_FILE="vllm.pid"
+TIMEOUT=15  
+PORT=8000   # Default fallback port
 
-# 1. Check if the PID file exists
+# 1. Parse port from arguments (accepts raw number or --port flag)
+ARGS=("$@")
+for ((i=0; i<${#ARGS[@]}; i++)); do
+    if [[ "${ARGS[i]}" == "--port" ]]; then
+        PORT="${ARGS[i+1]}"
+    elif [[ "${ARGS[i]}" =~ --port=(.*) ]]; then
+        PORT="${BASH_REMATCH[1]}"
+    elif [[ "${ARGS[i]}" =~ ^[0-9]+$ ]]; then
+        PORT="${ARGS[i]}"
+    fi
+done
+
+PID_FILE="vllm_${PORT}.pid"
+
+# 2. Check if the targeted PID file exists
 if [ ! -f "$PID_FILE" ]; then
-    echo "⚠️ No $PID_FILE found. Is the server even running?"
+    echo "⚠️ No tracking file '$PID_FILE' found. Is a server running on port $PORT?"
     exit 1
 fi
 
 VLLM_PID=$(cat "$PID_FILE")
 
-# 2. Check if the process is actually alive
+# 3. Check if the process is actually alive
 if kill -0 "$VLLM_PID" 2>/dev/null; then
-    echo "Stopping vLLM server gracefully (PID: $VLLM_PID)..."
+    echo "Stopping vLLM server on port $PORT gracefully (PID: $VLLM_PID)..."
     kill "$VLLM_PID" # Sends SIGTERM
     
-    # 3. Dynamic wait loop based on the TIMEOUT parameter
+    # Dynamic wait loop based on the TIMEOUT parameter
     ELAPSED=0
     while [ $ELAPSED -lt $TIMEOUT ]; do
         if ! kill -0 "$VLLM_PID" 2>/dev/null; then
-            echo "✅ vLLM server stopped successfully."
+            echo "✅ vLLM server on port $PORT stopped successfully."
             rm -f "$PID_FILE"
             exit 0
         fi
@@ -42,13 +55,13 @@ if kill -0 "$VLLM_PID" 2>/dev/null; then
         ((ELAPSED++))
     done
 
-    # 4. Force kill if timeout is reached
-    echo "⚠️ Server didn't stop within $TIMEOUT seconds. Forcing shutdown..."
+    # Force kill if timeout is reached
+    echo "⚠️ Server on port $PORT didn't stop within $TIMEOUT seconds. Forcing shutdown..."
     kill -9 "$VLLM_PID"
     echo "☠️ vLLM server force-killed."
 else
-    echo "ℹ️ The vLLM process ($VLLM_PID) was already dead."
+    echo "ℹ️ The vLLM process ($VLLM_PID) on port $PORT was already dead."
 fi
 
-# Clean up the artifact
+# Clean up the tracking file artifact
 rm -f "$PID_FILE"
