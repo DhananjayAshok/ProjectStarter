@@ -456,7 +456,7 @@ class InferenceModel(ABC):
         for og_batch_i, batch_outputs in enumerate(first_outputs_list):
             for return_seq_i, output in enumerate(batch_outputs):
                 if switch_phrase not in output:
-                    continue
+                    output = output + " " + switch_phrase
                 output_so_far = output.split(switch_phrase)[0]
                 n_tokens_estimated = len(output_so_far.split())
                 largest_max_tokens = max(largest_max_tokens, max_new_tokens - n_tokens_estimated)
