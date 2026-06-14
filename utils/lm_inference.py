@@ -487,7 +487,11 @@ class InferenceModel(ABC):
             num_return_sequences=1,
         )
         for i, output in enumerate(second_output):
-            second_output[i] = next_batch_output_so_fars[i] + "\n" + switch_phrase + " " + output.lstrip(switch_phrase).lstrip()
+           output = output.lstrip()
+            if output.startswith(switch_phrase):
+                output = output[len(switch_phrase):]
+            output = output.lstrip()
+            second_output[i] = next_batch_output_so_fars[i] + "\n" + switch_phrase + " " + output
         
         results = []
         for og_batch_i in range(len(first_outputs_list)):
