@@ -268,7 +268,7 @@ class APITextEmbeddingModel(RateLimitedAPIBase, TextEmbeddingModel, ABC):
         )
 
     @abstractmethod
-    async def query_client(self, *, texts: list[str]) -> list[list[float]]:
+    async def query_client(self, *, client: Any, texts: list[str]) -> list[list[float]]:
         """
         Send texts to the embedding API and return raw embedding vectors (asynchronously).
 
@@ -288,7 +288,8 @@ class APITextEmbeddingModel(RateLimitedAPIBase, TextEmbeddingModel, ABC):
         """
         self.wait()
         batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
-        results = await asyncio.gather(*(self.query_client(texts=batch) for batch in batches))
+        async with self._make_async_client() as client:
+            results = await asyncio.gather(*(self.query_client(client=client, texts=batch) for batch in batches))
         flat: list[list[float]] = []
         for batch_result in results:
             flat.extend(batch_result)
@@ -323,12 +324,12 @@ class OpenAIAPITextEmbeddingModel(OpenAICompatibleAPIBase, APITextEmbeddingModel
             parameters=parameters,
         )
 
-    async def query_client(self, *, texts: list[str]) -> list[list[float]]:
+    async def query_client(self, *, client: Any, texts: list[str]) -> list[list[float]]:
         max_tries = 3
         last_error = None
         for attempt in range(max_tries):
             try:
-                response = await self.async_client.embeddings.create(model=self.model, input=texts, encoding_format="float")
+                response = await client.embeddings.create(model=self.model, input=texts, encoding_format="float")
                 if response is None or not getattr(response, "data", None):
                     raise ValueError(f"API returned an invalid response (None/missing/empty data): {response}")
                 # Sort by index to preserve input order regardless of API response ordering.

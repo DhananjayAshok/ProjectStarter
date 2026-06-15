@@ -487,7 +487,7 @@ class InferenceModel(ABC):
             num_return_sequences=1,
         )
         for i, output in enumerate(second_output):
-           output = output.lstrip()
+            output = output.lstrip()
             if output.startswith(switch_phrase):
                 output = output[len(switch_phrase):]
             output = output.lstrip()
@@ -605,7 +605,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         pass
 
     @abstractmethod
-    async def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
+    async def query_client(self, client: Any, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
         Send messages to the API client (asynchronously) and return the raw response.
 
@@ -695,10 +695,9 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         Per-request rate-limit errors are handled by ``query_client``'s retry/backoff.
         """
         async with self._make_async_client() as client:
-            self.async_client = client
             self.wait()
             if self.SUPPORTS_NATIVE_N:
-                response = await self.query_client(messages, max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences)
+                response = await self.query_client(client, messages, max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences)
                 outputs = self.get_outputs(response)
                 if len(outputs) != num_return_sequences:
                     log_error(
@@ -708,7 +707,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
                 return outputs
             else:
                 async def query_one() -> str:
-                    response = await self.query_client(messages, max_new_tokens, temperature=temperature, stop_strings=stop_strings)
+                    response = await self.query_client(client, messages, max_new_tokens, temperature=temperature, stop_strings=stop_strings)
                     return self.get_output(response)
 
                 return list(await asyncio.gather(*(query_one() for _ in range(num_return_sequences))))
@@ -780,12 +779,11 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
         Per-request rate-limit errors are handled by ``query_client``'s retry/backoff.
         """
         async with self._make_async_client() as client:
-            self.async_client = client
             self.wait()
             if self.SUPPORTS_NATIVE_N:
                 async def query_one(input_message: dict) -> list[str]:
                     response = await self.query_client(
-                        [input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences
+                        client, [input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings, num_return_sequences=num_return_sequences
                     )
                     seq_outputs = self.get_outputs(response)
                     if len(seq_outputs) != num_return_sequences:
@@ -798,7 +796,7 @@ class APIModel(RateLimitedAPIBase, InferenceModel, ABC):
                 return list(await asyncio.gather(*(query_one(input_message) for input_message in inputs)))
             else:
                 async def query_one(input_message: dict) -> str:
-                    response = await self.query_client([input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings)
+                    response = await self.query_client(client, [input_message], max_new_tokens, temperature=temperature, stop_strings=stop_strings)
                     return self.get_output(response)
 
                 flat = await asyncio.gather(*(query_one(input_message) for input_message in inputs for _ in range(num_return_sequences)))
@@ -859,7 +857,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
             "image_url": {"url": f"data:image/jpeg;base64,{image}"},
         }
 
-    async def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
+    async def query_client(self, client: Any, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
         Send a message to the OpenAI chat completions endpoint (asynchronously).
 
@@ -884,7 +882,7 @@ class OpenAIAPIModel(OpenAICompatibleAPIBase, APIModel):
         last_error = None
         for attempt in range(max_tries):
             try:
-                response = await self.async_client.chat.completions.create(**kwargs)
+                response = await client.chat.completions.create(**kwargs)
                 if response is None or not getattr(response, "choices", None):
                     raise ValueError(f"API returned an invalid response (None/missing/empty choices): {response}")
                 return response
@@ -1012,7 +1010,7 @@ class AnthropicModel(APIModel):
             },
         }
 
-    async def query_client(self, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
+    async def query_client(self, client: Any, messages: list[dict], max_new_tokens: int, temperature: Optional[float] = None, stop_strings: list[str] = None, num_return_sequences: int = 1) -> Any:
         """
         Send a message to the Anthropic messages endpoint (asynchronously).
 
@@ -1038,7 +1036,7 @@ class AnthropicModel(APIModel):
         last_error = None
         for attempt in range(max_tries):
             try:
-                response = await self.async_client.messages.create(**kwargs)
+                response = await client.messages.create(**kwargs)
                 if response is None or not getattr(response, "content", None):
                     raise ValueError(f"API returned an invalid response (None/missing/empty content): {response}")
                 return response
