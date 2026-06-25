@@ -40,9 +40,21 @@ VLLM_PID=$(cat "$PID_FILE")
 
 # 3. Check if the process is actually alive
 if kill -0 "$VLLM_PID" 2>/dev/null; then
-    echo "Stopping vLLM server on port $PORT gracefully (PID: $VLLM_PID)..."
-    kill "$VLLM_PID" # Sends SIGTERM
-    
+    # Resolve the process group so we signal the whole vLLM tree (launcher +
+    # EngineCore workers), not just the launcher. Otherwise workers orphan and
+    # keep holding VRAM. Fall back to the bare PID if the group can't be read,
+    # or if it matches our own group (guards against killing an interactive shell).
+    PGID=$(ps -o pgid= -p "$VLLM_PID" | tr -d ' ')
+    MYPGID=$(ps -o pgid= -p $$ | tr -d ' ')
+    if [ -n "$PGID" ] && [ "$PGID" != "$MYPGID" ]; then
+        TARGET="-$PGID"
+    else
+        TARGET="$VLLM_PID"
+    fi
+
+    echo "Stopping vLLM server on port $PORT gracefully (PID: $VLLM_PID, group: ${PGID:-n/a})..."
+    kill -TERM "$TARGET" 2>/dev/null # Sends SIGTERM to the group
+
     # Dynamic wait loop based on the TIMEOUT parameter
     ELAPSED=0
     while [ $ELAPSED -lt $TIMEOUT ]; do
@@ -57,7 +69,7 @@ if kill -0 "$VLLM_PID" 2>/dev/null; then
 
     # Force kill if timeout is reached
     echo "⚠️ Server on port $PORT didn't stop within $TIMEOUT seconds. Forcing shutdown..."
-    kill -9 "$VLLM_PID"
+    kill -KILL "$TARGET" 2>/dev/null
     echo "☠️ vLLM server force-killed."
 else
     echo "ℹ️ The vLLM process ($VLLM_PID) on port $PORT was already dead."

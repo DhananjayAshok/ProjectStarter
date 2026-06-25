@@ -18,7 +18,7 @@
 #
 
 PORT=8000
-TIMEOUT=300
+TIMEOUT=1200  # 20 min: hybrid/Mamba models can take ~16+ min to warm up
 
 # 1. Dynamically extract the port from the forwarded arguments
 ARGS=("$@")
@@ -37,8 +37,9 @@ PID_FILE="vllm_${PORT}.pid"
 echo "Launching vLLM on port $PORT..."
 echo "Tracking logs via: $LOG_FILE"
 
-# Start vLLM in the background and pass ALL arguments through
-nohup vllm serve "$@" > "$LOG_FILE" 2>&1 &
+# Start vLLM in its own session/process group so the whole tree (APIServer +
+# EngineCore workers, which hold the VRAM) can be killed together later.
+setsid nohup vllm serve "$@" > "$LOG_FILE" 2>&1 &
 VLLM_PID=$!
 
 # Block until the health endpoint responds or the process crashes
@@ -59,5 +60,17 @@ while [ $SECONDS -lt $END_TIME ]; do
 done
 
 echo "❌ ERROR: Timed out waiting for vLLM to start on port $PORT."
-kill -9 $VLLM_PID
+# Kill the entire process group so EngineCore workers don't orphan and leak VRAM.
+# Guard: never group-kill our own group (would take down an interactive shell).
+PGID=$(ps -o pgid= -p "$VLLM_PID" | tr -d ' ')
+MYPGID=$(ps -o pgid= -p $$ | tr -d ' ')
+if [ -n "$PGID" ] && [ "$PGID" != "$MYPGID" ]; then
+    kill -TERM -"$PGID" 2>/dev/null
+    sleep 5
+    kill -KILL -"$PGID" 2>/dev/null
+else
+    kill -TERM "$VLLM_PID" 2>/dev/null
+    sleep 5
+    kill -KILL "$VLLM_PID" 2>/dev/null
+fi
 exit 1
