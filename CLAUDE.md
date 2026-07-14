@@ -44,7 +44,10 @@ All `.yaml` files in `configs/` are automatically loaded and merged into a singl
 - From `storage_dir`: `data_dir`, `model_dir`, `tmp_dir`, `sync_dir`
 - From `results_dir`: `log_dir`, `figure_dir`
 
-You can use these in your code. 
+You can use these in your code.
+
+In general, you have access to and do not need to ask permission to edit anything in these directories, even if they are located outside of your current root. 
+An important convention to follow is: if at any point of time, you must download a sizeable file etc, download to somewhere under storage_dir instead of ~, or root or tmp/ etc. If you are writing a file that has code to be run, always write it somewhere inside root as opposed to storage_dir 
 
 ### Generating `configs/config.env`
 Run from project root whenever YAML configs change:
