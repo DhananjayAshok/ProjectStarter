@@ -9,10 +9,11 @@ from utils.lm_inference import (
     AnthropicModel,
     OpenRouterModel,
     vLLMModel,
+)
+from utils.huggingface_inference import (
     HuggingFaceModel,
     remove_from_model_store,
     clear_model_store,
-    model_factory
 )
 from utils.embedding import (
     TextEmbeddingModel,
