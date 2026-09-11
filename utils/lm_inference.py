@@ -1,3 +1,4 @@
+import httpx
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from time import sleep, perf_counter
@@ -266,7 +267,11 @@ class OpenAICompatibleAPIBase(RateLimitedAPIBase):
         self._async_client_api_key = api_key
 
     def _make_async_client(self) -> AsyncOpenAI:
-        return AsyncOpenAI(base_url=self._async_client_base_url, api_key=self._async_client_api_key)
+        return AsyncOpenAI(
+            base_url=self._async_client_base_url,
+            api_key=self._async_client_api_key,
+            timeout=httpx.Timeout(600.0, connect=30.0),
+        )
 
 
 class InferenceModel(ABC):
